@@ -463,7 +463,7 @@ enum Strip {
 fn extract_zip(file: &Path, dest: &Path, strip: Strip) -> Result<(), String> {
     let f = std::fs::File::open(file).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("arşiv bozuk: {e}"))?;
-    let names: Vec<String> = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().map(|e| e.name().replace('\\', "/"))).collect();
+    let names: Vec<String> = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().and_then(|e| e.name().ok().map(|n| n.replace('\\', "/")))).collect();
     let prefix: Option<String> = match strip {
         Strip::FirstDir => None,
         Strip::ToManifest => {
@@ -477,7 +477,8 @@ fn extract_zip(file: &Path, dest: &Path, strip: Strip) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry.name().replace('\\', "/");
+        // zip 9: geçersiz (UTF-8 olmayan, güvensiz) adlar hata olarak döner
+        let name = entry.name().map_err(|e| format!("arşivde geçersiz dosya adı: {e}"))?.replace('\\', "/");
         let rel = match strip {
             Strip::FirstDir => match paths::strip_first_dir(&name) {
                 Some(r) => r.to_string(),

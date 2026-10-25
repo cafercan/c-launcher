@@ -51,6 +51,18 @@ jobs:
           releaseBody: "İşletim sisteminize uygun dosyayı indirin. Dosyaları SHA256SUMS.txt ile doğrulayabilirsiniz."
           releaseDraft: false
           args: ${{ matrix.args }}
+      - name: Taşınabilir Linux paketi
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          mkdir -p pkg/c-launcher
+          cp target/release/c-launcher pkg/c-launcher/
+          cp src-tauri/icons/icon.png pkg/c-launcher/c-launcher.png
+          cp LICENSE pkg/c-launcher/
+          tar -C pkg --owner=0 --group=0 -czf "c-launcher-$VER-linux-x86_64.tar.gz" c-launcher
+          gh release upload "$GITHUB_REF_NAME" "c-launcher-$VER-linux-x86_64.tar.gz" --repo "$GITHUB_REPOSITORY" --clobber
 
   checksums:
     needs: build

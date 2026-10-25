@@ -159,9 +159,38 @@ function render() {
 
   $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${data.source === 'github' ? 'GITHUB' : data.source === 'cache' ? 'ÖNBELLEK (ÇEVRİMDIŞI)' : 'GÖMÜLÜ LİSTE'}`;
   $('#target').textContent = `C LAUNCHER ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
+  renderBanner();
+}
+
+function renderBanner() {
   const banner = $('#banner');
   banner.hidden = !data.launcher_latest;
-  if (data.launcher_latest) banner.innerHTML = `C Launcher ${esc(data.launcher_latest)} yayında. <a href="#" data-url="${esc(data.launcher_url)}">İndir ↗</a>`;
+  if (!data.launcher_latest) return;
+  const job = jobs['c-launcher'];
+  if (job) {
+    const text = job.phase === 'download' && job.total
+      ? `İndiriliyor ${mb(job.done)} / ${mb(job.total)} · %${Math.round(job.done / job.total * 100)}`
+      : (PHASE[job.phase] || 'Hazırlanıyor') + '…';
+    banner.innerHTML = `C Launcher ${esc(data.launcher_latest)} güncelleniyor: ${text}`;
+    return;
+  }
+  const err = errors['c-launcher'] ? ` <span class="err">${esc(errors['c-launcher'])}</span>` : '';
+  banner.innerHTML = `<span>C Launcher ${esc(data.launcher_latest)} yayında.</span>
+    <button class="btn" id="selfUpdate">GÜNCELLE VE YENİDEN BAŞLAT</button>
+    <a href="#" data-url="${esc(data.launcher_url)}">Sürüm notları ↗</a>${err}`;
+}
+
+async function updateLauncher() {
+  delete errors['c-launcher'];
+  jobs['c-launcher'] = { phase: 'download', done: 0, total: 0 };
+  renderBanner();
+  try {
+    await invoke('update_launcher'); // başarıda uygulama kapanır, yeni sürüm açılır
+  } catch (e) {
+    errors['c-launcher'] = String(e);
+  }
+  delete jobs['c-launcher'];
+  renderBanner();
 }
 
 // ---------------------------------------------------------------- işlemler
@@ -247,6 +276,7 @@ document.addEventListener('click', e => {
     else if (act === 'menu') { e.stopPropagation(); showMenu(id, b); }
     return;
   }
+  if (e.target.closest('#selfUpdate')) { updateLauncher(); return; }
   const f = e.target.closest('[data-filter]');
   if (f) { filter = f.dataset.filter; render(); }
   const v = e.target.closest('[data-view]');
@@ -313,7 +343,7 @@ listen('job', ev => {
   const { id, phase, done, total } = ev.payload;
   if (phase === 'done') return;
   jobs[id] = { phase, done, total };
-  render();
+  if (id === 'c-launcher') renderBanner(); else render();
 });
 setInterval(() => data && ($('#checked').textContent = $('#checked').textContent.replace(/^SON KONTROL .*? ·/, `SON KONTROL ${ago(data.checked_at)} ·`)), 30000);
 

@@ -5,6 +5,7 @@ mod detect;
 mod github;
 mod install;
 mod opener;
+mod selfupdate;
 mod store;
 
 use std::collections::HashMap;
@@ -302,6 +303,42 @@ async fn set_install_root(state: State<'_, AppState>, path: Option<String>) -> R
     Ok(overview_of(loaded, &state))
 }
 
+/// C Launcher'ın kendisini günceller ve yeniden başlatır. İlerleme "job" olayında
+/// "c-launcher" kimliğiyle bildirilir.
+#[tauri::command]
+async fn update_launcher(handle: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    const ID: &str = "c-launcher";
+    let release = {
+        let guard = state.loaded.lock().await;
+        let loaded = guard.as_ref().ok_or("liste henüz yüklenmedi")?;
+        loaded.launcher_latest.clone().ok_or("yeni sürüm bilgisi yok")?
+    };
+    let current = Version::parse(env!("CARGO_PKG_VERSION")).ok_or("sürüm okunamadı")?;
+    if !version_of(&release).is_some_and(|v| v > current) {
+        return Err("zaten en son sürüm".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut jobs = state.jobs.lock().unwrap();
+        if jobs.contains_key(ID) {
+            return Err("güncelleme zaten sürüyor".into());
+        }
+        jobs.insert(ID.into(), cancel.clone());
+    }
+    let h = handle.clone();
+    let progress = move |phase: &str, done: u64, total: u64| {
+        let _ = h.emit("job", JobEvent { id: ID.into(), phase: phase.into(), done, total });
+    };
+    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress };
+    let result = selfupdate::run(&release, &ctx, true).await;
+    state.jobs.lock().unwrap().remove(ID);
+    let _ = handle.emit("job", JobEvent { id: ID.into(), phase: "done".into(), done: 0, total: 0 });
+    result?;
+    // yeni sürüm başlatıldı (Windows'ta kurulum bitince açılacak): bu kopya kapanır
+    handle.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     opener::open_url(&url)
@@ -312,7 +349,51 @@ fn open_chrome_extensions() -> Result<(), String> {
     opener::open_chrome_extensions()
 }
 
+/// `c-launcher --self-update`: pencere açmadan en son sürüme günceller (betikler ve denemeler için).
+fn cli_self_update() -> i32 {
+    let runtime = tokio::runtime::Runtime::new().expect("tokio");
+    runtime.block_on(async {
+        let store = Store::open();
+        let http = github::client();
+        let release = match github::latest_release(&http, github::LAUNCHER_REPO, &store.dir("cache")).await {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                eprintln!("henüz release yok");
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        };
+        let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        if !version_of(&release).is_some_and(|v| v > current) {
+            println!("C Launcher {current} güncel");
+            return 0;
+        }
+        let progress = |_: &str, _: u64, _: u64| {};
+        let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress };
+        match selfupdate::run(&release, &ctx, false).await {
+            Ok(()) => {
+                println!("C Launcher {current} → {} güncellendi", release.tag_name);
+                0
+            }
+            Err(e) => {
+                eprintln!("güncellenemedi: {e}");
+                1
+            }
+        }
+    })
+}
+
 fn main() {
+    if std::env::args().any(|a| a == "--self-update") {
+        std::process::exit(cli_self_update());
+    }
+    if std::env::args().any(|a| a == "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     tauri::Builder::default()
         .manage(AppState {
             store: Store::open(),
@@ -330,6 +411,7 @@ fn main() {
             uninstall,
             settings,
             set_install_root,
+            update_launcher,
             open_url,
             open_chrome_extensions
         ])

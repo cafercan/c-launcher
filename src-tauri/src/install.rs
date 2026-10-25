@@ -118,7 +118,7 @@ fn folder_name(name: &str) -> String {
 }
 
 /// Dosyayı indirir, indirirken SHA-256 özetini hesaplar.
-async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u64) -> Result<String, String> {
+pub(crate) async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u64) -> Result<String, String> {
     let resp = ctx
         .http
         .get(url)
@@ -151,7 +151,7 @@ async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u64) -> Resu
 }
 
 /// Release'te SHA256SUMS.txt varsa özeti karşılaştırır. Dosya yoksa `Ok(false)`.
-async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str) -> Result<bool, String> {
+pub(crate) async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str) -> Result<bool, String> {
     let Some(sums_asset) = release.assets.iter().find(|a| a.name.eq_ignore_ascii_case("SHA256SUMS.txt")) else {
         return Ok(false);
     };
@@ -173,11 +173,11 @@ async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str) -> R
     }
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-fn output_tail(out: &std::process::Output) -> String {
+pub(crate) fn output_tail(out: &std::process::Output) -> String {
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(4)..].join(" · ")
@@ -204,7 +204,7 @@ fn run_inno(file: &Path, dir: Option<PathBuf>) -> Result<String, String> {
 
 // ------------------------------------------------------------------ macOS: .dmg
 
-fn install_dmg(file: &Path, app_name: &str, target: Option<PathBuf>) -> Result<(String, PathBuf), String> {
+pub(crate) fn install_dmg(file: &Path, app_name: &str, target: Option<PathBuf>) -> Result<(String, PathBuf), String> {
     let mount = std::env::temp_dir().join(format!("c-launcher-dmg-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&mount);
     let out = Command::new("hdiutil")
@@ -268,7 +268,7 @@ fn detect_app_dir(app_name: &str) -> Option<PathBuf> {
 
 // ------------------------------------------------------------------ Linux: .deb
 
-fn pkexec(args: &[&str]) -> Result<std::process::Output, String> {
+pub(crate) fn pkexec(args: &[&str]) -> Result<std::process::Output, String> {
     Command::new("pkexec").args(args).output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             "pkexec bulunamadı; paketi terminalden kurun".to_string()
@@ -353,7 +353,7 @@ fn install_portable(id: &str, name: &str, archive: &Path, location: &Path, p: &l
     Ok(format!("{} klasörüne kuruldu", location.display()))
 }
 
-fn extract_tar_gz(file: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn extract_tar_gz(file: &Path, dest: &Path) -> Result<(), String> {
     let f = std::fs::File::open(file).map_err(|e| e.to_string())?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(f));
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;

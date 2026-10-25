@@ -28,7 +28,21 @@ tools and Chrome extensions) straight from their GitHub releases. Windows, macOS
 |---|---|
 | Windows 10/11 | `C.Launcher_<sürüm>_x64-setup.exe`: yönetici izni istemez |
 | macOS 11+ | `C.Launcher_<sürüm>_universal.dmg`: Apple silicon ve Intel |
-| Linux | `.deb` (Ubuntu, Debian, Mint) ya da `.AppImage` (diğerleri) |
+| Linux | `.deb` (Ubuntu, Debian, Mint), `.AppImage` ya da taşınabilir `c-launcher-<sürüm>-linux-x86_64.tar.gz` |
+
+Taşınabilir Linux paketi parola istemez: istediğiniz klasöre açıp `c-launcher/c-launcher`'ı çalıştırın.
+
+## Güncelleme
+
+Yeni bir C Launcher sürümü çıktığında pencerenin üstünde **Güncelle ve yeniden başlat** düğmesi
+görünür. Launcher yeni sürümü kendi release'inden indirir, `SHA256SUMS.txt` ile doğrular, nasıl
+kurulduysa o biçimle (Windows kurulumu, macOS `.app`, Linux `.deb`, AppImage ya da taşınabilir
+paket) yerine koyar ve yeniden açılır. Doğrulama dosyası yoksa güncelleme yapılmaz.
+
+Komut satırından: `c-launcher --self-update` (pencere açmadan günceller), `c-launcher --version`.
+
+Ayarlardan bir **kurulum klasörü** seçerseniz yeni kurulumlar oraya yapılır; ayrıntılar
+[docs/catalog.md](docs/catalog.md#kurulum-klasörü).
 
 > macOS sürümü Apple tarafından imzalı değil. İlk açılışta "geliştirici doğrulanamadı" uyarısı
 > çıkarsa uygulamaya sağ tıklayıp **Aç**'ı seçin.

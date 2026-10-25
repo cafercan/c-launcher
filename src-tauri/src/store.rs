@@ -2,7 +2,7 @@
 //! önbellek ve kurulu sürümlerin kaydı (`state.json`).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -36,10 +36,6 @@ impl Store {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Store { root, state: Mutex::new(state) }
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     pub fn dir(&self, name: &str) -> PathBuf {

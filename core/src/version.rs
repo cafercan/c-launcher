@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Version {
     parts: Vec<u64>,
     /// "-beta.1" gibi ön sürüm eki; ön sürüm, aynı numaralı kararlı sürümden küçüktür
@@ -57,6 +57,15 @@ impl Ord for Version {
         }
     }
 }
+
+// "1.2" ile "1.2.0" ve "1.2.0+build5" eşittir: eşitlik sıralamayla aynı kurala uyar
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Version {}
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

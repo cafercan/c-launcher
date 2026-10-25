@@ -297,6 +297,22 @@ $('#updateAll').addEventListener('click', async () => {
 });
 $('#closeChrome').addEventListener('click', () => $('#chrome').close());
 
+// ---------------------------------------------------------------- tema
+function markTheme() {
+  const t = window.themeChoice();
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.classList.toggle('on', b.dataset.themeSet === t));
+}
+$('#themeToggle').addEventListener('click', () => {
+  // tek tıkla, şu an görünenin tersine geç
+  const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+  window.setTheme(dark ? 'light' : 'dark');
+  markTheme();
+});
+$('#themeSeg').addEventListener('click', e => {
+  const b = e.target.closest('[data-theme-set]');
+  if (b) { window.setTheme(b.dataset.themeSet); markTheme(); }
+});
+
 // ---------------------------------------------------------------- ayarlar
 const ROOT_NOTE = {
   windows: 'Yeni kurulumlar bu klasöre yapılır. Daha önce kurulmuş uygulamalar güncellemede bulundukları yerde kalır. Chrome eklentileri "Chrome eklentileri" alt klasörüne açılır.',
@@ -310,6 +326,7 @@ async function showSettings() {
   $('#rootNote').textContent = s.install_root ? ROOT_NOTE[s.os] || ''
     : 'Uygulamalar sistemin olağan yerine kurulur (Windows: Programlar, macOS: Uygulamalar, Linux: .deb paketi). Klasör seçerseniz yeni kurulumlar oraya yapılır.';
   $('#resetRoot').disabled = !s.install_root;
+  markTheme();
   $('#settings').showModal();
 }
 async function setRoot(path) {

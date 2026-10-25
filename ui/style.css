@@ -6,13 +6,20 @@
   --sans: system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
   color-scheme: dark;
 }
+/* açık tema: sistem açıksa (kullanıcı koyu seçmediyse) ya da kullanıcı açık seçtiyse */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #eeede9; --panel: #f6f5f2; --raise: #ffffff; --line: #d6d4cd; --text: #17181a; --muted: #6f6f6a;
     --inv-bg: #141518; --inv-text: #f4f4f2;
     --blue: #2f5fd0; --green: #138a62; --amber: #a86a00; --violet: #6b48d6; --red: #c0392b; --gray: #8a8a85;
     color-scheme: light;
   }
+}
+:root[data-theme="light"] {
+    --bg: #eeede9; --panel: #f6f5f2; --raise: #ffffff; --line: #d6d4cd; --text: #17181a; --muted: #6f6f6a;
+    --inv-bg: #141518; --inv-text: #f4f4f2;
+    --blue: #2f5fd0; --green: #138a62; --amber: #a86a00; --violet: #6b48d6; --red: #c0392b; --gray: #8a8a85;
+    color-scheme: light;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -124,6 +131,10 @@ dialog p, dialog li { color: var(--muted); font-size: 13px; }
 dialog li b { color: var(--text); }
 .pathrow { display: flex; gap: 8px; margin: 14px 0; }
 .setlabel { font-size: 10px; color: var(--muted); margin-top: 14px; }
+.seg { display: inline-flex; border: 1px solid var(--line); margin: 10px 0 4px; }
+.seg button { border: 0; border-right: 1px solid var(--line); background: none; padding: 8px 14px; font-size: 11px; cursor: pointer; color: var(--muted); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--inv-bg); color: var(--inv-text); }
 #rootNote { line-height: 1.5; }
 .pathrow code { flex: 1; background: var(--bg); border: 1px solid var(--line); padding: 8px; font-size: 12px; overflow-x: auto; white-space: nowrap; }
 .pathrow button, .dlgfoot button { border: 1px solid var(--line); background: none; padding: 8px 12px; font-size: 11px; cursor: pointer; }

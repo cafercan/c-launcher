@@ -104,16 +104,18 @@ fn view(app: &App, loaded: &Loaded, state: &AppState) -> AppView {
         Some(Err(e)) => (None, Some(e.clone())),
         None => (None, None),
     };
+    let installed = spec.and_then(|s| detect::installed(&app.id, s, &state.store));
+    let root_set = state.store.install_root().is_some();
     // bu sistem için tarif var mı ve release'te ona uyan dosya var mı
     let asset = spec.zip(release).and_then(|(s, r)| match s.method {
         Method::Script => r.zipball_url.as_ref().map(|_| None),
         _ => {
+            let portable = install::uses_portable(s, installed.as_ref(), root_set);
             let names: Vec<&str> = r.assets.iter().map(|a| a.name.as_str()).collect();
-            let name = select::pick(s.asset.as_deref().unwrap_or(""), &names)?;
+            let name = select::pick(install::asset_pattern(s, portable).unwrap_or(""), &names)?;
             Some(r.assets.iter().find(|a| a.name == name).map(|a| a.size))
         }
     });
-    let installed = spec.and_then(|s| detect::installed(&app.id, s, &state.store));
     let installed_version = installed.as_ref().and_then(|i| i.version.as_deref()).and_then(Version::parse);
     let latest = release.and_then(version_of);
     let supported = spec.is_some() && (release.is_none() || asset.is_some() || installed.is_some());
@@ -264,6 +266,42 @@ async fn uninstall(state: State<'_, AppState>, id: String) -> Result<String, Str
     tokio::task::block_in_place(|| install::uninstall(&app, &spec, &state.store))
 }
 
+#[derive(Serialize)]
+struct Settings {
+    install_root: Option<String>,
+    suggested_root: String,
+    os: &'static str,
+}
+
+#[tauri::command]
+fn settings(state: State<'_, AppState>) -> Settings {
+    Settings {
+        install_root: state.store.install_root().map(|p| p.display().to_string()),
+        suggested_root: dirs::home_dir().unwrap_or_default().join("Apps").join("CLauncher").display().to_string(),
+        os: Os::current().key(),
+    }
+}
+
+/// Kurulum klasörünü ayarlar; `None` sistemin varsayılan yerlerine döner.
+#[tauri::command]
+async fn set_install_root(state: State<'_, AppState>, path: Option<String>) -> Result<Overview, String> {
+    let path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    if let Some(p) = &path {
+        let dir = std::path::Path::new(p);
+        if !dir.is_absolute() {
+            return Err("tam bir klasör yolu girin".into());
+        }
+        std::fs::create_dir_all(dir).map_err(|e| format!("klasör oluşturulamadı: {e}"))?;
+        let probe = dir.join(".c-launcher-write-test");
+        std::fs::write(&probe, b"").map_err(|_| "bu klasöre yazılamıyor".to_string())?;
+        let _ = std::fs::remove_file(probe);
+    }
+    state.store.set_install_root(path);
+    let guard = state.loaded.lock().await;
+    let loaded = guard.as_ref().ok_or("liste henüz yüklenmedi")?;
+    Ok(overview_of(loaded, &state))
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     opener::open_url(&url)
@@ -282,7 +320,19 @@ fn main() {
             loaded: tokio::sync::Mutex::new(None),
             jobs: Mutex::new(HashMap::new()),
         })
-        .invoke_handler(tauri::generate_handler![overview, refresh, install, cancel, open, uninstall, open_url, open_chrome_extensions])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            overview,
+            refresh,
+            install,
+            cancel,
+            open,
+            uninstall,
+            settings,
+            set_install_root,
+            open_url,
+            open_chrome_extensions
+        ])
         .run(tauri::generate_context!())
         .expect("C Launcher başlatılamadı");
 }

@@ -37,6 +37,10 @@ pub fn open_app(spec: &PlatformSpec, installed: &Installed) -> Result<(), String
             let app = installed.target.as_deref().ok_or("uygulama bulunamadı")?;
             spawn(Command::new("open").arg(app))
         }
+        Method::Deb if installed.portable => {
+            let run = installed.target.as_deref().ok_or("uygulama bulunamadı")?;
+            spawn(Command::new(run).current_dir(run.parent().unwrap_or(Path::new("."))))
+        }
         Method::Deb => {
             let run = spec.run.as_deref().or(spec.package.as_deref()).ok_or("başlatma komutu tanımlı değil")?;
             spawn(&mut Command::new(run))

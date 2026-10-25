@@ -8,7 +8,7 @@ pub mod status;
 pub mod sums;
 pub mod version;
 
-pub use catalog::{App, Catalog, Group, Method, PlatformSpec};
+pub use catalog::{App, Catalog, Group, Method, PlatformSpec, Portable};
 pub use status::Status;
 pub use version::Version;
 

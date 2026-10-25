@@ -81,6 +81,24 @@ pub struct PlatformSpec {
     /// Betik yöntemi: varsa kurulu olduğunu gösteren dosya (~ ev dizinidir)
     #[serde(default)]
     pub detect_path: Option<String>,
+    /// Linux: kullanıcı bir kurulum klasörü seçtiyse .deb yerine kullanılacak taşınabilir paket
+    #[serde(default)]
+    pub portable: Option<Portable>,
+}
+
+/// Seçilen klasöre açılan `.tar.gz` paketi.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Portable {
+    /// Release dosyası kalıbı, örneğin "kitaplik-*-linux-portable.tar.gz"
+    pub asset: String,
+    /// Arşivin içinde uygulamayı başlatan dosya
+    pub run: String,
+    /// Arşivin içinde menü simgesi
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Pencerenin sınıf adı: menüdeki kısayolla eşleşsin diye
+    #[serde(default)]
+    pub wm_class: Option<String>,
 }
 
 impl App {
@@ -141,6 +159,11 @@ impl Catalog {
                     Method::Script => need(&spec.install, "install")?,
                     Method::Chrome => need(&spec.asset, "asset")?,
                 }
+                if let Some(p) = &spec.portable {
+                    if p.asset.is_empty() || !crate::paths::is_plain_relative(&p.run) || p.icon.as_deref().is_some_and(|i| !crate::paths::is_plain_relative(i)) {
+                        return Err(format!("{where_}: taşınabilir paket tarifi geçersiz"));
+                    }
+                }
                 for script in [&spec.install, &spec.uninstall].into_iter().flatten() {
                     if !crate::paths::is_plain_relative(script) {
                         return Err(format!("{where_}: betik yolu depo içinde kalmalı: {script}"));
@@ -199,5 +222,8 @@ mod tests {
         assert!(with(r#"{"id":"a","repo":"x/y","name":"A","group":"nope","platforms":{}}"#).is_err());
         assert!(with(r#"{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{"linux":{"method":"deb","asset":"a.deb"}}}"#).is_err());
         assert!(with(r#"{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{"linux":{"method":"script","install":"../evil.sh"}}}"#).is_err());
+        let deb = r#""method":"deb","asset":"a.deb","package":"a""#;
+        assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"portable":{{"asset":"a.tar.gz","run":"a/run"}}}}}}}}"#)).is_ok());
+        assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"portable":{{"asset":"a.tar.gz","run":"/bin/sh"}}}}}}}}"#)).is_err());
     }
 }

@@ -16,6 +16,9 @@
   <button class="icon" id="refresh" title="Yeniden kontrol et">
     <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
   </button>
+  <button class="icon" id="openSettings" title="Ayarlar">
+    <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="2"/></svg>
+  </button>
 </header>
 
 <div class="toolbar">
@@ -48,6 +51,14 @@
   </ol>
   <div class="pathrow"><code id="chromePath"></code><button id="copyPath">KOPYALA</button></div>
   <div class="dlgfoot"><button id="openExt">CHROME'U AÇ</button><button id="closeChrome" class="primary">TAMAM</button></div>
+</dialog>
+
+<dialog id="settings">
+  <h2>Ayarlar</h2>
+  <div class="label setlabel">KURULUM KLASÖRÜ</div>
+  <div class="pathrow"><code id="rootPath"></code><button id="pickRoot">KLASÖR SEÇ</button></div>
+  <p id="rootNote"></p>
+  <div class="dlgfoot"><button id="resetRoot">SİSTEM VARSAYILANI</button><button id="closeSettings" class="primary">KAPAT</button></div>
 </dialog>
 
 <script src="app.js"></script>

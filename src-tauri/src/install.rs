@@ -32,30 +32,88 @@ pub struct Ctx<'a> {
 /// Kurar ya da günceller; başarıda kullanıcıya gösterilecek kısa bir not döner.
 pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ctx<'_>) -> Result<String, String> {
     let version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
-    match spec.method {
-        Method::Script => install_script(app, spec, release, &version, ctx).await,
-        method => {
-            let pattern = spec.asset.as_deref().ok_or("katalogda dosya kalıbı yok")?;
-            let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
-            let name = select::pick(pattern, &names).ok_or_else(|| format!("release'te {pattern} kalıbına uyan dosya yok"))?;
-            let asset = release.assets.iter().find(|a| a.name == name).unwrap();
-            let file = ctx.store.dir("downloads").join(&asset.name);
-            let digest = download(ctx, &asset.browser_download_url, &file, asset.size).await?;
-            let verified = verify(ctx, release, &asset.name, &digest).await?;
-            (ctx.progress)("install", 0, 0);
-            let note = match method {
-                Method::Inno => blocking(move || run_inno(&file)).await?,
-                Method::Dmg => {
-                    let app_name = spec.app.clone().unwrap_or_default();
-                    blocking(move || install_dmg(&file, &app_name)).await?
-                }
-                Method::Deb => blocking(move || install_deb(&file)).await?,
-                Method::Chrome => install_chrome(&app.id, &file, &version, ctx.store)?,
-                Method::Script => unreachable!(),
-            };
-            let _ = std::fs::remove_file(ctx.store.dir("downloads").join(&asset.name));
-            Ok(if verified { note } else { format!("{note} (release'te SHA256SUMS.txt olmadığı için doğrulanmadı)") })
+    let before = detect::installed(&app.id, spec, ctx.store);
+    // seçilen klasör yalnızca yeni kurulumlarda kullanılır; güncellemeler ilk kurulduğu yerde kalır
+    let root = if before.is_none() { ctx.store.install_root() } else { None };
+    if spec.method == Method::Script {
+        return install_script(app, spec, release, &version, ctx).await;
+    }
+    let portable = uses_portable(spec, before.as_ref(), ctx.store.install_root().is_some());
+    let pattern = asset_pattern(spec, portable).ok_or("katalogda dosya kalıbı yok")?;
+    let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
+    let name = select::pick(pattern, &names).ok_or_else(|| format!("release'te {pattern} kalıbına uyan dosya yok"))?;
+    let asset = release.assets.iter().find(|a| a.name == name).unwrap();
+    let file = ctx.store.dir("downloads").join(&asset.name);
+    let digest = download(ctx, &asset.browser_download_url, &file, asset.size).await?;
+    let verified = verify(ctx, release, &asset.name, &digest).await?;
+    (ctx.progress)("install", 0, 0);
+    let file2 = file.clone();
+    let note = match spec.method {
+        Method::Inno => {
+            let dir = root.map(|r| r.join(folder_name(&app.name)));
+            blocking(move || run_inno(&file2, dir)).await?
         }
+        Method::Dmg => {
+            let app_name = spec.app.clone().unwrap_or_default();
+            // güncellemede: uygulama nerede duruyorsa oraya
+            let target = before.as_ref().and_then(|i| i.target.as_ref()).and_then(|p| p.parent().map(Path::to_path_buf)).or(root.clone());
+            let (note, dir) = blocking(move || install_dmg(&file2, &app_name, target)).await?;
+            let custom = !matches!(dir.to_str(), Some("/Applications"));
+            ctx.store.set_record(&app.id, Some(Record { version: version.clone(), location: custom.then(|| dir.display().to_string()), ..Default::default() }));
+            note
+        }
+        Method::Deb if portable => {
+            let p = spec.portable.clone().unwrap();
+            let location = match before.as_ref() {
+                Some(_) => ctx.store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).ok_or("taşınabilir kurulumun yeri bulunamadı")?,
+                None => root.clone().ok_or("kurulum klasörü seçilmemiş")?.join(folder_name(&app.name)),
+            };
+            let (id, name) = (app.id.clone(), app.name.clone());
+            let loc2 = location.clone();
+            let note = blocking(move || install_portable(&id, &name, &file2, &loc2, &p)).await?;
+            ctx.store.set_record(&app.id, Some(Record { version: version.clone(), location: Some(location.display().to_string()), ..Default::default() }));
+            note
+        }
+        Method::Deb => blocking(move || install_deb(&file2)).await?,
+        Method::Chrome => {
+            let dir = match (&before, &root) {
+                (Some(_), _) => detect::extension_dir(ctx.store, &app.id),
+                (None, Some(r)) => r.join("Chrome eklentileri").join(&app.id),
+                (None, None) => ctx.store.dir("extensions").join(&app.id),
+            };
+            install_chrome(&app.id, &file, &version, &dir, ctx.store)?
+        }
+        Method::Script => unreachable!(),
+    };
+    let _ = std::fs::remove_file(&file);
+    Ok(if verified { note } else { format!("{note} (release'te SHA256SUMS.txt olmadığı için doğrulanmadı)") })
+}
+
+/// Linux: taşınabilir paket mi kurulacak? Zaten öyle kuruluysa evet; hiç kurulu değilse
+/// kullanıcı bir kurulum klasörü seçtiyse ve uygulama böyle bir paket sunuyorsa evet.
+pub fn uses_portable(spec: &PlatformSpec, before: Option<&detect::Installed>, root_set: bool) -> bool {
+    spec.method == Method::Deb
+        && spec.portable.is_some()
+        && match before {
+            Some(i) => i.portable,
+            None => root_set,
+        }
+}
+
+pub fn asset_pattern(spec: &PlatformSpec, portable: bool) -> Option<&str> {
+    if portable {
+        spec.portable.as_ref().map(|p| p.asset.as_str())
+    } else {
+        spec.asset.as_deref()
+    }
+}
+
+/// Klasör adı olarak güvenli uygulama adı.
+fn folder_name(name: &str) -> String {
+    let n: String = name.chars().filter(|c| !"<>:\"/\\|?*".contains(*c) && !c.is_control()).collect();
+    match n.trim().trim_matches('.') {
+        "" => "app".into(),
+        t => t.to_string(),
     }
 }
 
@@ -127,9 +185,13 @@ fn output_tail(out: &std::process::Output) -> String {
 
 // ------------------------------------------------------------------ Windows: Inno Setup
 
-fn run_inno(file: &Path) -> Result<String, String> {
-    let status = Command::new(file)
-        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CLOSEAPPLICATIONS"])
+fn run_inno(file: &Path, dir: Option<PathBuf>) -> Result<String, String> {
+    let mut cmd = Command::new(file);
+    cmd.args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CLOSEAPPLICATIONS"]);
+    if let Some(d) = dir {
+        cmd.arg(format!("/DIR={}", d.display()));
+    }
+    let status = cmd
         .status()
         .map_err(|e| format!("kurulum başlatılamadı: {e}"))?;
     match status.code() {
@@ -142,7 +204,7 @@ fn run_inno(file: &Path) -> Result<String, String> {
 
 // ------------------------------------------------------------------ macOS: .dmg
 
-fn install_dmg(file: &Path, app_name: &str) -> Result<String, String> {
+fn install_dmg(file: &Path, app_name: &str, target: Option<PathBuf>) -> Result<(String, PathBuf), String> {
     let mount = std::env::temp_dir().join(format!("c-launcher-dmg-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&mount);
     let out = Command::new("hdiutil")
@@ -154,19 +216,22 @@ fn install_dmg(file: &Path, app_name: &str) -> Result<String, String> {
     if !out.status.success() {
         return Err(format!("DMG açılamadı: {}", output_tail(&out)));
     }
-    let result = copy_app(&mount, app_name);
+    let result = copy_app(&mount, app_name, target);
     let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&mount).output();
     let _ = std::fs::remove_dir(&mount);
     result
 }
 
-fn copy_app(mount: &Path, app_name: &str) -> Result<String, String> {
+fn copy_app(mount: &Path, app_name: &str, target: Option<PathBuf>) -> Result<(String, PathBuf), String> {
     let src = mount.join(app_name);
     if !src.exists() {
         return Err(format!("DMG içinde {app_name} yok"));
     }
-    // daha önce nereye kurulduysa oraya; yoksa yazılabiliyorsa /Applications
-    let existing = detect_app_dir(app_name);
+    // istenen klasör; yoksa daha önce nereye kurulduysa oraya; o da yoksa yazılabiliyorsa /Applications
+    if let Some(t) = &target {
+        std::fs::create_dir_all(t).map_err(|e| format!("{} oluşturulamadı: {e}", t.display()))?;
+    }
+    let existing = target.or_else(|| detect_app_dir(app_name));
     let dir = existing.unwrap_or_else(|| {
         let system = PathBuf::from("/Applications");
         let probe = system.join(".c-launcher-write-test");
@@ -192,7 +257,7 @@ fn copy_app(mount: &Path, app_name: &str) -> Result<String, String> {
     }
     std::fs::rename(&staging, &dest).map_err(|e| e.to_string())?;
     let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(&dest).output();
-    Ok(format!("{} klasörüne kuruldu", dir.display()))
+    Ok((format!("{} klasörüne kuruldu", dir.display()), dir))
 }
 
 fn detect_app_dir(app_name: &str) -> Option<PathBuf> {
@@ -225,8 +290,10 @@ fn install_deb(file: &Path) -> Result<String, String> {
 
 // ------------------------------------------------------------------ Chrome eklentisi
 
-fn install_chrome(id: &str, zip_file: &Path, version: &str, store: &Store) -> Result<String, String> {
-    let dir = detect::extension_dir(store, id);
+fn install_chrome(id: &str, zip_file: &Path, version: &str, dir: &Path, store: &Store) -> Result<String, String> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{} oluşturulamadı: {e}", parent.display()))?;
+    }
     let staging = dir.with_file_name(format!("{id}.new"));
     let _ = std::fs::remove_dir_all(&staging);
     extract_zip(zip_file, &staging, Strip::ToManifest)?;
@@ -239,16 +306,88 @@ fn install_chrome(id: &str, zip_file: &Path, version: &str, store: &Store) -> Re
     let old = dir.with_file_name(format!("{id}.old"));
     let _ = std::fs::remove_dir_all(&old);
     if dir.exists() {
-        std::fs::rename(&dir, &old).map_err(|e| e.to_string())?;
+        std::fs::rename(dir, &old).map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&staging, &dir).map_err(|e| e.to_string())?;
+    std::fs::rename(&staging, dir).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(&old);
-    store.set_record(id, Some(Record { version: version.to_string(), needs_reload: was_installed }));
+    store.set_record(id, Some(Record { version: version.to_string(), needs_reload: was_installed, location: Some(dir.display().to_string()) }));
     Ok(if was_installed {
         "Güncellendi. Chrome'da chrome://extensions sayfasında eklentinin yenile düğmesine basın".into()
     } else {
         "Dosyalar hazır. Chrome'a yüklemek için Aç'a basın".into()
     })
+}
+
+// ------------------------------------------------------------------ Linux: taşınabilir paket
+
+fn desktop_file(id: &str) -> PathBuf {
+    dirs::data_dir().unwrap_or_default().join("applications").join(format!("c-launcher-{id}.desktop"))
+}
+
+fn install_portable(id: &str, name: &str, archive: &Path, location: &Path, p: &launcher_core::Portable) -> Result<String, String> {
+    let staging = location.with_file_name(format!(".{}.c-launcher-new", folder_name(name)));
+    let _ = std::fs::remove_dir_all(&staging);
+    extract_tar_gz(archive, &staging)?;
+    if !staging.join(&p.run).exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(format!("paketin içinde {} yok", p.run));
+    }
+    if location.exists() {
+        std::fs::remove_dir_all(location).map_err(|e| format!("eski sürüm kaldırılamadı: {e}"))?;
+    }
+    std::fs::rename(&staging, location).map_err(|e| e.to_string())?;
+    // uygulama menüsünde görünsün
+    let run = location.join(&p.run);
+    let icon = p.icon.as_ref().map(|i| location.join(i).display().to_string()).unwrap_or_default();
+    let wm = p.wm_class.as_ref().map(|w| format!("StartupWMClass={w}\n")).unwrap_or_default();
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec=\"{}\"\nIcon={icon}\nTerminal=false\nCategories=Utility;\n{wm}X-C-Launcher-Id={id}\n",
+        run.display()
+    );
+    let desktop = desktop_file(id);
+    if let Some(dir) = desktop.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&desktop, entry).map_err(|e| format!("menü kısayolu yazılamadı: {e}"))?;
+    let _ = Command::new("update-desktop-database").arg(desktop.parent().unwrap()).output();
+    Ok(format!("{} klasörüne kuruldu", location.display()))
+}
+
+fn extract_tar_gz(file: &Path, dest: &Path) -> Result<(), String> {
+    let f = std::fs::File::open(file).map_err(|e| e.to_string())?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(f));
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in archive.entries().map_err(|e| format!("arşiv bozuk: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("arşiv bozuk: {e}"))?;
+        let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+        let Some(target) = paths::safe_join(dest, &name) else {
+            // "./" gibi kök girdileri atla, dışarı çıkan yolları reddet
+            if name.trim_start_matches("./").is_empty() {
+                continue;
+            }
+            return Err(format!("arşivde güvensiz yol: {name}"));
+        };
+        let kind = entry.header().entry_type();
+        if kind.is_dir() {
+            std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        } else if kind.is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mode = entry.header().mode().unwrap_or(0o644);
+            let mut out = std::fs::File::create(&target).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o755));
+            }
+            #[cfg(not(unix))]
+            let _ = mode;
+        }
+        // bağlantılar ve özel dosyalar güvenlik için atlanır
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ terminal araçları
@@ -265,7 +404,7 @@ async fn install_script(app: &App, spec: &PlatformSpec, release: &Release, versi
     let script = spec.install.clone().unwrap_or_default();
     let src2 = src.clone();
     blocking(move || run_script(&src2, &script)).await?;
-    ctx.store.set_record(&app.id, Some(Record { version: version.to_string(), needs_reload: false }));
+    ctx.store.set_record(&app.id, Some(Record { version: version.to_string(), ..Default::default() }));
     Ok(match &app.usage {
         Some(u) => format!("Kuruldu. Yeni bir terminal açın. {u}"),
         None => "Kuruldu. Yeni bir terminal açın".into(),
@@ -392,6 +531,12 @@ pub fn uninstall(app: &App, spec: &PlatformSpec, store: &Store) -> Result<String
             } else {
                 std::fs::remove_dir_all(&path).map(|_| "Kaldırıldı".into()).map_err(|e| e.to_string())
             }
+        }
+        Method::Deb if found.as_ref().is_some_and(|i| i.portable) => {
+            let location = store.record(&app.id).and_then(|r| r.location).ok_or("kurulum yeri bulunamadı")?;
+            std::fs::remove_dir_all(&location).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(desktop_file(&app.id));
+            Ok("Kaldırıldı".into())
         }
         Method::Deb => {
             let package = spec.package.as_deref().unwrap_or_default();

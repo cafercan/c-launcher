@@ -21,7 +21,18 @@
           "inno_app_id": "{6F1C2A7E-4B8D-4C3A-9E51-2D7B8F0A1C64}"
         },
         "macos": { "method": "dmg", "asset": "kitaplik-*-macos-arm64.dmg", "app": "Kitaplik.app" },
-        "linux": { "method": "deb", "asset": "kitaplik-*-linux-all.deb", "package": "kitaplik", "run": "kitaplik" }
+        "linux": {
+          "method": "deb",
+          "asset": "kitaplik-*-linux-all.deb",
+          "package": "kitaplik",
+          "run": "kitaplik",
+          "portable": {
+            "asset": "kitaplik-*-linux-portable.tar.gz",
+            "run": "kitaplik/kitaplik",
+            "icon": "kitaplik/kitaplik.svg",
+            "wm_class": "kitaplik"
+          }
+        }
       }
     },
     {

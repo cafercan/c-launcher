@@ -121,6 +121,8 @@ dialog h2 { margin: 0 0 8px; font-size: 18px; }
 dialog p, dialog li { color: var(--muted); font-size: 13px; }
 dialog li b { color: var(--text); }
 .pathrow { display: flex; gap: 8px; margin: 14px 0; }
+.setlabel { font-size: 10px; color: var(--muted); margin-top: 14px; }
+#rootNote { line-height: 1.5; }
 .pathrow code { flex: 1; background: var(--bg); border: 1px solid var(--line); padding: 8px; font-size: 12px; overflow-x: auto; white-space: nowrap; }
 .pathrow button, .dlgfoot button { border: 1px solid var(--line); background: none; padding: 8px 12px; font-size: 11px; cursor: pointer; }
 .dlgfoot { display: flex; justify-content: flex-end; gap: 8px; }

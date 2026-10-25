@@ -43,6 +43,35 @@ Bir sistem için `platforms` içinde kayıt yoksa kart o sistemde soluk görün�
 
 `asset`, release'teki dosya adı için `*` içerebilen bir kalıptır: `kitaplik-*-windows-x64-setup.exe`.
 
+## Kurulum klasörü
+
+Kullanıcı ayarlardan bir kurulum klasörü seçerse **yeni** kurulumlar oraya yapılır; daha önce
+kurulmuş uygulamalar güncellemede bulundukları yerde kalır:
+
+- **Windows (`inno`):** klasör Inno Setup'a `/DIR=` ile verilir (`<klasör>\<Uygulama adı>`).
+- **macOS (`dmg`):** `.app` doğrudan seçilen klasöre kopyalanır.
+- **Chrome:** eklenti `<klasör>/Chrome eklentileri/<id>` altına açılır.
+- **Linux (`deb`):** `.deb` paketlerinin yeri değiştirilemez. Uygulama release'inde taşınabilir
+  bir `.tar.gz` sunuyorsa launcher onu `<klasör>/<Uygulama adı>` altına açar ve
+  `~/.local/share/applications` altına menü kısayolu yazar (yönetici parolası gerekmez):
+
+```json
+"linux": {
+  "method": "deb", "asset": "kitaplik-*-linux-all.deb", "package": "kitaplik", "run": "kitaplik",
+  "portable": {
+    "asset": "kitaplik-*-linux-portable.tar.gz",
+    "run": "kitaplik/kitaplik",
+    "icon": "kitaplik/kitaplik.svg",
+    "wm_class": "kitaplik"
+  }
+}
+```
+
+  `run` ve `icon` arşivin içindeki yollardır; `wm_class`, pencerenin menüdeki kısayolla
+  eşleşmesi için uygulamanın pencere sınıfıdır. Taşınabilir paketi olmayan uygulamalar Linux'ta
+  her zaman `.deb` olarak kurulur.
+- **Terminal araçları:** yeri kurulum betiği belirler.
+
 ## Uyumlu release için kurallar
 
 1. **Etiket sürümdür.** `v1.2.0` gibi; launcher bunu kurulu sürümle karşılaştırır. Uygulamanın

@@ -19,6 +19,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util
 futures-util = "0.3"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+tauri-plugin-dialog = "2"
 dirs = "5"
 
 [target.'cfg(windows)'.dependencies]

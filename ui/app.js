@@ -266,6 +266,44 @@ $('#updateAll').addEventListener('click', async () => {
   for (const a of data.apps.filter(a => a.status === 'update_available' && !jobs[a.id])) await install(a.id);
 });
 $('#closeChrome').addEventListener('click', () => $('#chrome').close());
+
+// ---------------------------------------------------------------- ayarlar
+const ROOT_NOTE = {
+  windows: 'Yeni kurulumlar bu klasöre yapılır. Daha önce kurulmuş uygulamalar güncellemede bulundukları yerde kalır. Chrome eklentileri "Chrome eklentileri" alt klasörüne açılır.',
+  macos: 'Yeni kurulumlar bu klasöre kopyalanır. Daha önce kurulmuş uygulamalar güncellemede bulundukları yerde kalır. Chrome eklentileri "Chrome eklentileri" alt klasörüne açılır.',
+  linux: 'Yeni kurulumlarda, uygulama sunuyorsa .deb yerine taşınabilir paket bu klasöre açılır ve menüye kısayol eklenir; yönetici parolası gerekmez. Taşınabilir paketi olmayan uygulamalar .deb olarak kurulur. Güncellemeler bulundukları yerde kalır.',
+};
+async function showSettings() {
+  const s = await invoke('settings');
+  showSettings.s = s;
+  $('#rootPath').textContent = s.install_root || 'Sistem varsayılanı';
+  $('#rootNote').textContent = s.install_root ? ROOT_NOTE[s.os] || ''
+    : 'Uygulamalar sistemin olağan yerine kurulur (Windows: Programlar, macOS: Uygulamalar, Linux: .deb paketi). Klasör seçerseniz yeni kurulumlar oraya yapılır.';
+  $('#resetRoot').disabled = !s.install_root;
+  $('#settings').showModal();
+}
+async function setRoot(path) {
+  try {
+    data = await invoke('set_install_root', { path });
+    render();
+    await showSettings();
+  } catch (e) {
+    toast('Klasör ayarlanamadı: ' + e, true);
+  }
+}
+$('#openSettings').addEventListener('click', () => showSettings().catch(e => toast(String(e), true)));
+$('#closeSettings').addEventListener('click', () => $('#settings').close());
+$('#resetRoot').addEventListener('click', () => setRoot(null));
+$('#pickRoot').addEventListener('click', async () => {
+  const s = showSettings.s || {};
+  let path = null;
+  if (TAURI && TAURI.dialog) {
+    path = await TAURI.dialog.open({ directory: true, title: 'Kurulum klasörünü seçin', defaultPath: s.install_root || s.suggested_root });
+  } else {
+    path = prompt('Kurulum klasörü', s.install_root || s.suggested_root);
+  }
+  if (path) setRoot(Array.isArray(path) ? path[0] : path);
+});
 $('#openExt').addEventListener('click', () => invoke('open_chrome_extensions').catch(e => toast(String(e), true)));
 $('#copyPath').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('#chromePath').textContent); toast('Klasör yolu kopyalandı'); }
@@ -312,6 +350,8 @@ function mock(cmd, args) {
       }, 250);
     });
   }
+  if (cmd === 'settings') return Promise.resolve({ install_root: mock.root || null, suggested_root: '/home/kullanici/Apps/CLauncher', os: 'linux' });
+  if (cmd === 'set_install_root') { mock.root = args.path; return Promise.resolve(JSON.parse(JSON.stringify(mock.state))); }
   if (cmd === 'open') return Promise.resolve({ kind: args.id === 'kedy' ? 'chrome' : 'launched', path: '/home/kullanici/.local/share/c-launcher/extensions/kedy' });
   return Promise.resolve('tamam');
 }

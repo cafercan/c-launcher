@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "groups": [
+    { "id": "desktop", "title": "Masaüstü uygulamaları" },
+    { "id": "terminal", "title": "Terminal araçları" },
+    { "id": "chrome", "title": "Chrome eklentileri" }
+  ],
+  "apps": [
+    {
+      "id": "kitaplik",
+      "name": "Kitaplık",
+      "repo": "cafercan/kitaplik",
+      "group": "desktop",
+      "description": "E-kitap kitaplığı: etiket, filtre, kalite puanı",
+      "accent": "#2f6f5e",
+      "icon": "https://raw.githubusercontent.com/cafercan/kitaplik/main/kitaplik.svg",
+      "platforms": {
+        "windows": {
+          "method": "inno",
+          "asset": "kitaplik-*-windows-x64-setup.exe",
+          "inno_app_id": "{6F1C2A7E-4B8D-4C3A-9E51-2D7B8F0A1C64}"
+        },
+        "macos": { "method": "dmg", "asset": "kitaplik-*-macos-arm64.dmg", "app": "Kitaplik.app" },
+        "linux": { "method": "deb", "asset": "kitaplik-*-linux-all.deb", "package": "kitaplik", "run": "kitaplik" }
+      }
+    },
+    {
+      "id": "mdviewer",
+      "name": "MD Flow Viewer",
+      "repo": "cafercan/MDViewer",
+      "group": "desktop",
+      "description": "Markdown görüntüleyici ve düzenleyici: canlı yenileme, Mermaid",
+      "accent": "#3b6fd4",
+      "icon": "https://raw.githubusercontent.com/cafercan/MDViewer/main/public/favicon-192.png",
+      "platforms": {
+        "windows": {
+          "method": "inno",
+          "asset": "MDViewer-*.exe",
+          "inno_app_id": "{9E7231B5-C614-4AAA-B5EA-B73031BECD16}"
+        },
+        "linux": { "method": "deb", "asset": "mdflowviewer_*_all.deb", "package": "mdflowviewer", "run": "mdflowviewer" }
+      }
+    },
+    {
+      "id": "xd",
+      "name": "xd",
+      "repo": "cafercan/xd",
+      "group": "terminal",
+      "description": "Sık kullanılan klasörlere kısa adlarla gitme",
+      "accent": "#b8862b",
+      "usage": "Terminalde: xd -add <ad> <klasör>  ·  xd <ad>",
+      "platforms": {
+        "windows": { "method": "script", "install": "install.ps1", "uninstall": "uninstall.ps1" },
+        "macos": { "method": "script", "install": "install.sh", "uninstall": "uninstall.sh", "detect_path": "~/.local/share/xd/xd.sh" },
+        "linux": { "method": "script", "install": "install.sh", "uninstall": "uninstall.sh", "detect_path": "~/.local/share/xd/xd.sh" }
+      }
+    },
+    {
+      "id": "anlik-dublaj",
+      "name": "Anlık Dublaj",
+      "repo": "cafercan/anlik-dublaj",
+      "group": "chrome",
+      "description": "Tarayıcıdaki videoları gerçek zamanlı Türkçe dinletir",
+      "accent": "#c0392b",
+      "icon": "https://raw.githubusercontent.com/cafercan/anlik-dublaj/main/icons/icon128.png",
+      "platforms": {
+        "any": { "method": "chrome", "asset": "anlik-dublaj-*.zip" }
+      }
+    },
+    {
+      "id": "kedy",
+      "name": "Kedy",
+      "repo": "cafercan/kedy",
+      "group": "chrome",
+      "description": "İmleci kafası ve gözleriyle takip eden sevimli kedi",
+      "accent": "#8e44ad",
+      "icon": "https://raw.githubusercontent.com/cafercan/kedy/main/icons/icon128.png",
+      "platforms": {
+        "any": { "method": "chrome", "asset": "kedy-chrome-extension-*.zip" }
+      }
+    }
+  ]
+}

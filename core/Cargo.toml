@@ -1,0 +1,10 @@
+[package]
+name = "launcher-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "C Launcher: katalog, sürüm, dosya seçimi ve durum mantığı (işletim sisteminden bağımsız)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

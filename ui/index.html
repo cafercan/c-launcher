@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C Launcher</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="logo">C</span>C LAUNCHER</div>
+  <nav class="views">
+    <button data-view="grid" class="on">KART</button>
+    <button data-view="table">TABLO</button>
+  </nav>
+  <button class="icon" id="refresh" title="Yeniden kontrol et">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+  </button>
+</header>
+
+<div class="toolbar">
+  <div class="filters" id="filters"></div>
+  <div class="spacer"></div>
+  <input id="search" type="search" placeholder="Uygulama ara" autocomplete="off">
+  <button id="updateAll" class="primary">TÜMÜNÜ GÜNCELLE</button>
+</div>
+
+<div id="banner" class="banner" hidden></div>
+<main id="content"><p class="loading">Uygulamalar yükleniyor…</p></main>
+
+<footer class="bar foot">
+  <span id="checked"></span>
+  <span class="spacer"></span>
+  <a href="#" data-url="https://github.com/cafercan">GITHUB ↗</a>
+  <span id="target"></span>
+</footer>
+
+<div id="menu" class="menu" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<dialog id="chrome">
+  <h2>Chrome'a yükle</h2>
+  <p>Eklenti Chrome Web Mağazası'nda olmadığı için bir kez elle yüklenir. Sonraki güncellemelerde yalnızca yenile düğmesine basmanız yeterli.</p>
+  <ol>
+    <li>Açılan <code>chrome://extensions</code> sayfasında sağ üstten <b>Geliştirici modu</b>nu açın.</li>
+    <li><b>Paketlenmemiş öğe yükle</b>'ye basın ve aşağıdaki klasörü seçin.</li>
+    <li>Güncellemeden sonra eklentinin kartındaki <b>↻ yenile</b> düğmesine basın.</li>
+  </ol>
+  <div class="pathrow"><code id="chromePath"></code><button id="copyPath">KOPYALA</button></div>
+  <div class="dlgfoot"><button id="openExt">CHROME'U AÇ</button><button id="closeChrome" class="primary">TAMAM</button></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

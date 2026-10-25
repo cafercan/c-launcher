@@ -1,0 +1,66 @@
+# v* etiketi itildiğinde Windows, macOS ve Linux paketlerini derler, GitHub Release'e
+# yükler ve SHA256SUMS.txt ekler.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ""
+          - os: macos-latest
+            args: "--target universal-apple-darwin"
+          - os: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Etiket ile sürüm uyuşuyor mu
+        shell: bash
+        run: |
+          VER=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"([0-9][^"]*)".*/\1/')
+          [ "$GITHUB_REF_NAME" = "v$VER" ] || { echo "Etiket $GITHUB_REF_NAME, tauri.conf.json sürümü $VER"; exit 1; }
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npx --yes @tauri-apps/cli@2
+          tagName: ${{ github.ref_name }}
+          releaseName: C Launcher ${{ github.ref_name }}
+          releaseBody: "İşletim sisteminize uygun dosyayı indirin. Dosyaları SHA256SUMS.txt ile doğrulayabilirsiniz."
+          releaseDraft: false
+          args: ${{ matrix.args }}
+
+  checksums:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir out && cd out
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*' --skip-existing
+          rm -f SHA256SUMS.txt latest.json
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber

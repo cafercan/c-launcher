@@ -133,13 +133,28 @@ async fn fetch_once(state: &AppState) -> Loaded {
     let (catalog, sources) = github::catalog(&state.http, &cache, token.as_deref()).await;
     // token yalnızca girişle okunan kaynakların depolarına gider
     let token_for = |private: bool| token.clone().filter(|_| private);
-    let plain = catalog.apps.iter().filter(|a| a.tag_prefix.is_none()).map(|a| {
+    // yerel aynadan okunan uygulamalar: ayna başına tek liste, giriş gerekmez
+    let mut by_mirror: std::collections::BTreeMap<&str, Vec<&App>> = Default::default();
+    for a in &catalog.apps {
+        if let Some(m) = &a.mirror {
+            by_mirror.entry(m).or_default().push(a);
+        }
+    }
+    let mirrored = by_mirror.into_iter().map(|(mirror, apps)| {
+        let (http, mirror) = (state.http.clone(), mirror.to_string());
+        let wanted: Vec<(String, String)> = apps.iter().map(|a| (a.id.clone(), a.tag_prefix.clone().unwrap_or_default())).collect();
+        async move {
+            let list = github::mirror_releases(&http, &mirror).await;
+            wanted.iter().map(|(id, p)| (id.clone(), list.as_ref().map(|l| github::pick_prefixed(l, p)).map_err(Clone::clone))).collect::<Vec<_>>()
+        }
+    });
+    let plain = catalog.apps.iter().filter(|a| a.mirror.is_none() && a.tag_prefix.is_none()).map(|a| {
         let (http, cache, repo, id, t) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone(), token_for(a.private));
         async move { (id, github::latest_release(&http, &repo, &cache, t.as_deref()).await) }
     });
     // aynı depoyu paylaşan önekli uygulamalar için depo başına tek liste
     let mut by_repo: std::collections::BTreeMap<&str, Vec<&App>> = Default::default();
-    for a in catalog.apps.iter().filter(|a| a.tag_prefix.is_some()) {
+    for a in catalog.apps.iter().filter(|a| a.mirror.is_none() && a.tag_prefix.is_some()) {
         by_repo.entry(&a.repo).or_default().push(a);
     }
     let shared = by_repo.into_iter().map(|(repo, apps)| {
@@ -152,12 +167,13 @@ async fn fetch_once(state: &AppState) -> Loaded {
             wanted.iter().map(|(id, p)| (id.clone(), list.as_ref().map(|l| github::pick_prefixed(l, p)).map_err(Clone::clone))).collect::<Vec<_>>()
         }
     });
-    let (plain, shared, launcher) = tokio::join!(
+    let (plain, shared, mirrored, launcher) = tokio::join!(
         futures_util::future::join_all(plain),
         futures_util::future::join_all(shared),
-        github::launcher_release(&state.http, &cache, token.as_deref())
+        futures_util::future::join_all(mirrored),
+        github::launcher_release(&state.http, &cache, token.as_deref(), github::launcher_mirror(&sources))
     );
-    let releases = plain.into_iter().chain(shared.into_iter().flatten()).collect();
+    let releases = plain.into_iter().chain(shared.into_iter().flatten()).chain(mirrored.into_iter().flatten()).collect();
     Loaded { catalog, releases, launcher_latest: launcher.ok().flatten(), sources, checked_at: now() }
 }
 
@@ -464,7 +480,9 @@ fn cli_self_update() -> i32 {
         let store = Store::open();
         let http = github::client();
         let token = github::BRAND.login.as_ref().and_then(|_| token::load());
-        let release = match github::launcher_release(&http, &store.dir("cache"), token.as_deref()).await {
+        // komut satırı: aynanın ulaşılabilirliğini bilmeden önce aynayı, sonra GitHub'ı dener
+        let mirror = github::BRAND.sources.iter().find(|s| s.repo == github::BRAND.launcher_repo).and_then(|s| s.mirror.as_deref());
+        let release = match github::launcher_release(&http, &store.dir("cache"), token.as_deref(), mirror).await {
             Ok(Some(r)) => r,
             Ok(None) => {
                 eprintln!("henüz release yok");

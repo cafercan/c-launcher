@@ -41,6 +41,10 @@ pub struct Source {
     /// Ulaşılamazsa uygulamaya gömülü catalog.json kullanılır
     #[serde(default)]
     pub embedded: bool,
+    /// Yerel ağdaki ayna (ör. "http://192.0.2.10/araclar"): ulaşılabiliyorsa katalog ve
+    /// release'ler girişsiz buradan okunur (`catalog.json`, `releases.json`)
+    #[serde(default)]
+    pub mirror: Option<String>,
     /// Bu kaynağın bütün uygulamaları bu grupta gösterilir
     #[serde(default)]
     pub group: Option<Group>,
@@ -95,12 +99,20 @@ impl Brand {
             if !valid_repo(&s.repo) || !crate::paths::is_plain_relative(&s.path) || s.branch.is_empty() {
                 return Err(format!("brand.json: geçersiz katalog kaynağı {}", s.repo));
             }
+            if s.mirror.as_deref().is_some_and(|m| !valid_mirror(m)) {
+                return Err(format!("brand.json: {}: ayna adresi http:// ya da https:// ile başlamalı, / ile bitmemeli", s.repo));
+            }
             if s.private && self.login.is_none() {
                 return Err(format!("brand.json: {}: özel katalog giriş gerektirir", s.repo));
             }
         }
         Ok(())
     }
+}
+
+fn valid_mirror(m: &str) -> bool {
+    let rest = m.strip_prefix("http://").or_else(|| m.strip_prefix("https://"));
+    rest.is_some_and(|r| !r.is_empty() && !r.ends_with('/') && !r.contains(|c: char| c.is_whitespace() || "\"'<>\\?#".contains(c)))
 }
 
 #[cfg(test)]
@@ -147,5 +159,10 @@ mod tests {
         assert!(err.contains("özel katalog giriş gerektirir"), "{err}");
         assert!(with(r#"{"login":{"client_id":"Iv1.abc"},"sources":[{"repo":"example-org/tools","private":true}]}"#).is_ok());
         assert!(with(r#"{"sources":[{"repo":"example-org/x","path":"../catalog.json"}]}"#).is_err());
+        assert!(with(r#"{"sources":[{"repo":"example-org/x","mirror":"http://192.0.2.10/tools"}]}"#).is_ok());
+        assert!(with(r#"{"sources":[{"repo":"example-org/x","mirror":"https://mirror.example.org"}]}"#).is_ok());
+        assert!(with(r#"{"sources":[{"repo":"example-org/x","mirror":"http://192.0.2.10/tools/"}]}"#).is_err());
+        assert!(with(r#"{"sources":[{"repo":"example-org/x","mirror":"ftp://192.0.2.10"}]}"#).is_err());
+        assert!(with(r#"{"sources":[{"repo":"example-org/x","mirror":"http://"}]}"#).is_err());
     }
 }

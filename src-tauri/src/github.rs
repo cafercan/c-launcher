@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 
-use launcher_core::{merge, Brand, Catalog, Group};
+use launcher_core::{merge, Brand, Catalog, Group, Part};
 use serde::{Deserialize, Serialize};
 
 /// Bu derlemenin adı, veri klasörü, katalog kaynakları ve güncelleme deposu
@@ -117,9 +117,31 @@ pub struct SourceState {
     pub repo: String,
     /// Kaynağın uygulamalarının gösterildiği grup (brand.json'da verildiyse)
     pub group: Option<Group>,
-    /// "github" | "cache" | "embedded" | "none" | "login" (giriş yapılmadığı için okunmadı)
+    /// "mirror" | "github" | "cache" | "embedded" | "none" | "login" (giriş yapılmadığı için okunmadı)
     pub from: &'static str,
     pub error: Option<String>,
+    /// Kaynağın yerel aynası tanımlı (ofis ağında girişsiz okunur)
+    pub has_mirror: bool,
+}
+
+/// Yerel aynaya ulaşmak için beklenecek en uzun süre: ofis dışındayken açılışı geciktirmesin.
+const MIRROR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+async fn fetch_mirror(http: &reqwest::Client, mirror: &str, file: &str) -> Result<String, String> {
+    let resp = http
+        .get(format!("{mirror}/{file}"))
+        .timeout(MIRROR_TIMEOUT)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("yerel sunucuya ulaşılamadı: {e}"))?;
+    resp.text().await.map_err(|e| e.to_string())
+}
+
+/// Aynadaki release listesi (`releases.json`, GitHub'ın liste biçiminde; indirme adresleri aynayı gösterir).
+pub async fn mirror_releases(http: &reqwest::Client, mirror: &str) -> Result<Vec<Release>, String> {
+    let text = fetch_mirror(http, mirror, "releases.json").await?;
+    serde_json::from_str(&text).map_err(|e| format!("yerel sunucudaki release listesi okunamadı: {e}"))
 }
 
 /// Bütün kaynakların katalogları, birleştirilmiş. Her kaynak için önce GitHub'daki güncel
@@ -128,13 +150,23 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
     let mut parts = Vec::new();
     let mut states = Vec::new();
     for src in &BRAND.sources {
-        let mut state = SourceState { repo: src.repo.clone(), group: src.group.clone(), from: "none", error: None };
+        let mut state = SourceState { repo: src.repo.clone(), group: src.group.clone(), from: "none", error: None, has_mirror: src.mirror.is_some() };
+        let cache = cache_dir.join(format!("catalog-{}.json", src.repo.replace('/', "__")));
+        // ofis ağındaysak: yerel aynadan, girişsiz
+        if let Some(m) = &src.mirror {
+            if let Some((c, text)) = fetch_mirror(http, m, "catalog.json").await.ok().and_then(|t| Catalog::parse(&t).ok().map(|c| (c, t))) {
+                let _ = std::fs::write(&cache, text);
+                state.from = "mirror";
+                parts.push(Part { catalog: c, group: src.group.clone(), private: false, mirror: Some(m.clone()) });
+                states.push(state);
+                continue;
+            }
+        }
         if src.private && token.is_none() {
             state.from = "login";
             states.push(state);
             continue;
         }
-        let cache = cache_dir.join(format!("catalog-{}.json", src.repo.replace('/', "__")));
         let fetched = match fetch_catalog(http, src, token).await {
             Ok(t) => Some(t),
             Err(e) => {
@@ -153,7 +185,7 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
         }
         state.from = from;
         if let Some(c) = catalog {
-            parts.push((c, src.group.clone(), src.private));
+            parts.push(Part { catalog: c, group: src.group.clone(), private: src.private, mirror: None });
         }
         states.push(state);
     }
@@ -240,12 +272,29 @@ pub fn pick_prefixed(list: &[Release], prefix: &str) -> Option<Release> {
 }
 
 /// Launcher'ın kendi son sürümü; depo başka araçlarla paylaşılıyorsa önekli etiketlerden.
-pub async fn launcher_release(http: &reqwest::Client, cache_dir: &Path, token: Option<&str>) -> Result<Option<Release>, String> {
+/// Launcher deposunun aynasına bu yüklemede ulaşıldıysa (`mirror`) oradan okunur.
+pub async fn launcher_release(http: &reqwest::Client, cache_dir: &Path, token: Option<&str>, mirror: Option<&str>) -> Result<Option<Release>, String> {
     let repo = &BRAND.launcher_repo;
-    match BRAND.launcher_tag_prefix.as_deref() {
+    let prefix = BRAND.launcher_tag_prefix.as_deref();
+    if let Some(m) = mirror {
+        if let Ok(list) = mirror_releases(http, m).await {
+            return Ok(pick_prefixed(&list, prefix.unwrap_or("")));
+        }
+    }
+    match prefix {
         Some(p) => Ok(pick_prefixed(&releases(http, repo, cache_dir, token, &[p]).await?, p)),
         None => latest_release(http, repo, cache_dir, token).await,
     }
+}
+
+/// Bu yüklemede aynasına ulaşılan launcher deposu kaynağının ayna adresi.
+pub fn launcher_mirror(states: &[SourceState]) -> Option<&'static str> {
+    BRAND
+        .sources
+        .iter()
+        .zip(states)
+        .find(|(src, st)| src.repo == BRAND.launcher_repo && st.from == "mirror")
+        .and_then(|(src, _)| src.mirror.as_deref())
 }
 
 const PER_PAGE: usize = 100;
@@ -318,6 +367,45 @@ mod tests {
         assert!(need_more(&found, &["a-", "b-"], 1));
         assert!(!need_more(&found, &["a-"], 1));
         assert!(!need_more(&found, &["a-", "b-"], MAX_PAGES));
+    }
+
+    /// Tek bir isteğe verilen yanıtla yerel bir HTTP sunucusu; adresini döner.
+    fn serve_once(body: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf);
+                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn mirror_releases_reads_list_and_fails_fast() {
+        let body = r#"[{"tag_name":"tool-v1.2.0","assets":[{"name":"Tool-v1.2.0.exe","size":3,"browser_download_url":"http://192.0.2.10/x/files/tool-v1.2.0/Tool-v1.2.0.exe","url":""}]}]"#;
+        let list = mirror_releases(&client(), &serve_once(body)).await.unwrap();
+        let r = pick_prefixed(&list, "tool-").unwrap();
+        assert_eq!(r.tag_name, "v1.2.0");
+        // ayna adresi indirme adresi olarak kalır; token gitmez
+        assert!(!launcher_core::auth::token_allowed(&r.assets[0].browser_download_url));
+        // kapalı bir port: kısa sürede hata
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let started = std::time::Instant::now();
+        assert!(mirror_releases(&client(), &format!("http://{closed}")).await.is_err());
+        assert!(started.elapsed() < MIRROR_TIMEOUT + std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn unprefixed_pick_takes_newest_stable() {
+        // aynadaki önek kullanmayan depolar: GitHub'ın "latest" seçimiyle aynı sonuç
+        let mut beta = rel("v2.0.0-beta.1");
+        beta.prerelease = true;
+        let list = vec![rel("v1.0.0"), beta, rel("v1.4.0"), rel("notes")];
+        assert_eq!(pick_prefixed(&list, "").unwrap().tag_name, "v1.4.0");
     }
 
     #[test]

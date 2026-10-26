@@ -12,7 +12,7 @@ pub mod sums;
 pub mod version;
 
 pub use brand::{Brand, Login, Source};
-pub use catalog::{merge, App, Catalog, Group, Method, PlatformSpec, Portable};
+pub use catalog::{merge, Part, App, Catalog, Group, Method, PlatformSpec, Portable};
 pub use status::Status;
 pub use version::Version;
 

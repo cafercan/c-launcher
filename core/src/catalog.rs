@@ -81,6 +81,11 @@ pub struct PlatformSpec {
     /// Betik yöntemi: varsa kurulu olduğunu gösteren dosya (~ ev dizinidir)
     #[serde(default)]
     pub detect_path: Option<String>,
+    /// Betik yöntemi: bunlardan biri varsa kurulu sayılır. `~/` ev dizini, `{documents}/`
+    /// Belgeler klasörüdür. `detect_path`'e ek olarak ayrı bir alan: eski launcher'lar
+    /// tanımadığı alanı yok sayar, tanımadığı yer tutucuyu ise yanlış yorumlardı.
+    #[serde(default)]
+    pub detect_paths: Vec<String>,
     /// Linux: kullanıcı bir kurulum klasörü seçtiyse .deb yerine kullanılacak taşınabilir paket
     #[serde(default)]
     pub portable: Option<Portable>,
@@ -105,6 +110,13 @@ impl App {
     /// Bu sistem için kurulum tarifi; yoksa uygulama bu sistemde sunulmuyor demektir.
     pub fn spec_for(&self, os: Os) -> Option<&PlatformSpec> {
         self.platforms.get(os.key()).or_else(|| self.platforms.get("any"))
+    }
+}
+
+impl PlatformSpec {
+    /// Betik yöntemi: kurulu olduğunu gösterebilecek bütün yollar.
+    pub fn detect_candidates(&self) -> impl Iterator<Item = &str> {
+        self.detect_path.iter().chain(&self.detect_paths).map(String::as_str)
     }
 }
 
@@ -164,6 +176,9 @@ impl Catalog {
                         return Err(format!("{where_}: taşınabilir paket tarifi geçersiz"));
                     }
                 }
+                if spec.detect_candidates().any(str::is_empty) {
+                    return Err(format!("{where_}: boş algılama yolu"));
+                }
                 for script in [&spec.install, &spec.uninstall].into_iter().flatten() {
                     if !crate::paths::is_plain_relative(script) {
                         return Err(format!("{where_}: betik yolu depo içinde kalmalı: {script}"));
@@ -205,6 +220,27 @@ mod tests {
         assert_eq!(kedy.spec_for(Os::Windows).unwrap().method, Method::Chrome);
         let md = c.apps.iter().find(|a| a.id == "mdviewer").unwrap();
         assert!(md.spec_for(Os::Macos).is_none(), "MDViewer'ın Mac sürümü yok");
+    }
+
+    #[test]
+    fn script_tools_are_detectable_everywhere() {
+        // elle kurulmuş bir terminal aracı da "kurulu" görünmeli: her sistemde bir algılama yolu gerekir
+        let c = Catalog::parse(REAL).unwrap();
+        for app in c.apps.iter() {
+            for (os, spec) in &app.platforms {
+                if spec.method == Method::Script {
+                    assert!(spec.detect_candidates().next().is_some(), "{} / {os}: algılama yolu yok", app.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn detect_candidates_merge_both_fields() {
+        let c = with(r#"{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{"windows":{"method":"script","install":"i.ps1","detect_path":"~/a","detect_paths":["{documents}/b"]}}}"#).unwrap();
+        let spec = c.apps[0].spec_for(Os::Windows).unwrap();
+        assert_eq!(spec.detect_candidates().collect::<Vec<_>>(), ["~/a", "{documents}/b"]);
+        assert!(with(r#"{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{"windows":{"method":"script","install":"i.ps1","detect_paths":[""]}}}"#).is_err());
     }
 
     fn with(app_json: &str) -> Result<Catalog, String> {

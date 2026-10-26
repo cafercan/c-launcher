@@ -35,11 +35,14 @@ pub fn installed(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Install
         Method::Deb => deb(spec.package.as_deref()?).or_else(|| portable(id, spec, store)),
         Method::Script => {
             let record = store.record(id);
-            let on_disk = spec
-                .detect_path
-                .as_deref()
-                .zip(dirs::home_dir())
-                .map(|(p, home)| launcher_core::paths::expand_home(p, &home).exists());
+            // tanımlı bir algılama yolu yoksa yalnızca launcher'ın kaydına bakılır
+            let (home, documents) = (dirs::home_dir(), dirs::document_dir());
+            let mut candidates = spec.detect_candidates().peekable();
+            let on_disk = candidates.peek().is_some().then(|| {
+                candidates
+                    .filter_map(|p| launcher_core::paths::expand_known(p, home.as_deref(), documents.as_deref()))
+                    .any(|p| p.exists())
+            });
             match (record, on_disk) {
                 // kayıt var ama araç diskten silinmiş: kurulu değil
                 (Some(_), Some(false)) => None,

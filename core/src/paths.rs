@@ -40,6 +40,19 @@ pub fn expand_home(p: &str, home: &Path) -> PathBuf {
     }
 }
 
+/// Katalogdaki bir algılama yolunu açar: "~/x" ev dizinine, "{documents}/x" Belgeler
+/// klasörüne göre. Windows'ta Belgeler OneDrive'a yönlendirilmiş olabilir; o yüzden
+/// "~/Documents" yazmak yetmez. Klasör bilinmiyorsa `None` döner.
+pub fn expand_known(p: &str, home: Option<&Path>, documents: Option<&Path>) -> Option<PathBuf> {
+    if let Some(rest) = p.strip_prefix("{documents}/") {
+        return documents.map(|d| d.join(rest));
+    }
+    if p.starts_with("~/") {
+        return home.map(|h| expand_home(p, h));
+    }
+    Some(PathBuf::from(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +78,16 @@ mod tests {
         assert!(!is_plain_relative("../install.sh"));
         assert!(!is_plain_relative("/bin/sh"));
         assert!(!is_plain_relative("a\\b.ps1"));
+    }
+
+    #[test]
+    fn expands_known_folders() {
+        let home = Path::new("/home/u");
+        let docs = Path::new("/docs");
+        assert_eq!(expand_known("~/.local/x", Some(home), Some(docs)), Some(home.join(".local/x")));
+        assert_eq!(expand_known("{documents}/WindowsPowerShell/Modules/xd", Some(home), Some(docs)), Some(docs.join("WindowsPowerShell/Modules/xd")));
+        assert_eq!(expand_known("{documents}/x", Some(home), None), None);
+        assert_eq!(expand_known("~/x", None, Some(docs)), None);
     }
 
     #[test]

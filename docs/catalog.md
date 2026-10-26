@@ -38,10 +38,18 @@ Bir sistem için `platforms` içinde kayıt yoksa kart o sistemde soluk görün�
 | `inno` | Windows | `asset`, `inno_app_id` | Inno Setup kurulumu sessiz kipte çalıştırılır (`/VERYSILENT`). Kurulu sürüm kayıt defterindeki `{AppId}_is1` anahtarından okunur |
 | `dmg` | macOS | `asset`, `app` | DMG bağlanır, `.app` `/Applications`'a (yazılamıyorsa `~/Applications`'a) kopyalanır. Sürüm `Info.plist`'teki `CFBundleShortVersionString`'den okunur |
 | `deb` | Linux | `asset`, `package`, `run` | `pkexec apt-get install` ile kurulur (sistem parola penceresi açılır). Sürüm `dpkg`'den okunur |
-| `script` | hepsi | `install`, isteğe bağlı `uninstall`, `detect_path` | Release'in kaynak arşivi indirilir, depodaki betik çalıştırılır (`.ps1` PowerShell ile, diğerleri bash ile) |
+| `script` | hepsi | `install`, isteğe bağlı `uninstall`, `detect_path` / `detect_paths` | Release'in kaynak arşivi indirilir, depodaki betik çalıştırılır (`.ps1` PowerShell ile, diğerleri bash ile) |
 | `chrome` | hepsi (`any`) | `asset` | Eklenti zip'i launcher'ın veri klasörüne açılır; kullanıcı Chrome'a bir kez "Paketlenmemiş öğe yükle" ile ekler. Güncellemeler aynı klasöre yazılır |
 
 `asset`, release'teki dosya adı için `*` içerebilen bir kalıptır: `kitaplik-*-windows-x64-setup.exe`.
+
+`script` yönteminde araç elle kurulmuş olsa da "kurulu" görünsün diye kurulumun bıraktığı bir
+dosya ya da klasör verilir. `detect_path` tek yol, `detect_paths` yol listesidir; biri varsa araç
+kurulu sayılır. `~/` ev dizini, `{documents}/` Belgeler klasörüdür (Windows'ta OneDrive'a
+yönlendirilmiş olabilir, `~/Documents` yazmak yetmez). `{documents}` yalnızca `detect_paths`'te
+kullanılmalı: eski launcher sürümleri `detect_paths`'i yok sayar, `detect_path`'teki yer tutucuyu
+ise düz yol sanıp kurulu aracı kurulu değil gösterir. Algılama yolu yoksa yalnızca launcher'ın
+kendi kurulum kaydına bakılır.
 
 ## Kurulum klasörü
 

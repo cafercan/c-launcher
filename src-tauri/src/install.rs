@@ -382,16 +382,28 @@ fn locked(e: std::io::Error) -> String {
 }
 
 fn install_portable_windows(app: &App, spec: &PlatformSpec, file: &Path, dir: &Path) -> Result<String, String> {
+    place_portable(&app.id, spec, file, dir)?;
+    // kısayol olmasa da uygulama launcher'dan açılır: hata kurulumu bozmaz
+    let exe = detect::portable_exe(dir, spec, &app.id);
+    let note = match write_shortcut(&detect::start_menu_shortcut(app), &exe, dir) {
+        Ok(()) => "Kuruldu; Başlat menüsünde de bulunur".to_string(),
+        Err(e) => format!("Kuruldu (Başlat menüsü kısayolu eklenemedi: {e})"),
+    };
+    Ok(note)
+}
+
+/// İndirilen exe'yi ya da zip'in içeriğini uygulamanın klasörüne yerleştirir.
+fn place_portable(id: &str, spec: &PlatformSpec, file: &Path, dir: &Path) -> Result<(), String> {
     match spec.method {
         Method::Exe => {
             std::fs::create_dir_all(dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
-            replace_exe(file, &detect::portable_exe(dir, spec, &app.id))?;
+            replace_exe(file, &detect::portable_exe(dir, spec, id))?;
         }
         _ => {
             if !one_top_folder(&zip_names(file)?) {
                 return Err("zip'in kökünde tek bir klasör olmalı".into());
             }
-            let staging = dir.with_file_name(format!("{}.new", app.id));
+            let staging = dir.with_file_name(format!("{id}.new"));
             let _ = std::fs::remove_dir_all(&staging);
             extract_zip(file, &staging, Strip::FirstDir)?;
             let run = spec.run.as_deref().unwrap_or_default();
@@ -402,13 +414,7 @@ fn install_portable_windows(app: &App, spec: &PlatformSpec, file: &Path, dir: &P
             swap_dir(&staging, dir)?;
         }
     }
-    // kısayol olmasa da uygulama launcher'dan açılır: hata kurulumu bozmaz
-    let exe = detect::portable_exe(dir, spec, &app.id);
-    let note = match write_shortcut(&detect::start_menu_shortcut(app), &exe, dir) {
-        Ok(()) => "Kuruldu; Başlat menüsünde de bulunur".to_string(),
-        Err(e) => format!("Kuruldu (Başlat menüsü kısayolu eklenemedi: {e})"),
-    };
-    Ok(note)
+    Ok(())
 }
 
 /// Yeni .exe'yi önce yanına kopyalar, sonra eskisinin üzerine taşır: yarım kalmış bir dosya
@@ -806,6 +812,44 @@ mod tests {
         assert!(sums_required(Method::Zip, true).is_ok());
         // eski yöntemler eskisi gibi: uyarıyla kurulur
         assert!(sums_required(Method::Inno, false).is_ok());
+    }
+
+    /// Verilen (yol, içerik) girdileriyle bir zip dosyası yazar.
+    fn make_zip(path: &Path, entries: &[(&str, &str)]) {
+        let mut z = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, body) in entries {
+            z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+
+    #[test]
+    fn zip_install_and_update_place_folder_contents() {
+        let d = temp("place");
+        let spec: PlatformSpec = serde_json::from_str(r#"{"method":"zip","asset":"tool-*-windows-x64-portable.zip","run":"tool.exe"}"#).unwrap();
+        let dir = d.join("apps").join("tool");
+        let v1 = d.join("v1.zip");
+        make_zip(&v1, &[("tool-1.0.0-windows-x64-portable/tool.exe", "1"), ("tool-1.0.0-windows-x64-portable/lib/a.dll", "a")]);
+        place_portable("tool", &spec, &v1, &dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("tool.exe")).unwrap(), "1");
+        assert!(dir.join("lib/a.dll").exists());
+        // güncelleme: klasör adı sürümle değişse de içerik aynı yere gelir, eski dosyalar gider
+        let v2 = d.join("v2.zip");
+        make_zip(&v2, &[("tool-2.0.0-windows-x64-portable/tool.exe", "2")]);
+        place_portable("tool", &spec, &v2, &dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("tool.exe")).unwrap(), "2");
+        assert!(!dir.join("lib").exists() && !d.join("apps/tool.new").exists() && !d.join("apps/tool.old").exists());
+        // kökte tek klasör yoksa: kurulmaz, eski sürüm yerinde
+        let flat = d.join("flat.zip");
+        make_zip(&flat, &[("tool.exe", "3")]);
+        assert!(place_portable("tool", &spec, &flat, &dir).unwrap_err().contains("tek bir klasör"));
+        // run yoksa: kurulmaz, eski sürüm yerinde
+        let wrong = d.join("wrong.zip");
+        make_zip(&wrong, &[("x-1/other.exe", "4")]);
+        assert!(place_portable("tool", &spec, &wrong, &dir).is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("tool.exe")).unwrap(), "2");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

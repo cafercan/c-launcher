@@ -35,7 +35,7 @@ pub struct Store {
 
 impl Store {
     pub fn open() -> Store {
-        let root = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("c-launcher");
+        let root = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(&crate::github::BRAND.data_dir);
         let _ = std::fs::create_dir_all(&root);
         let state = std::fs::read_to_string(root.join("state.json"))
             .ok()

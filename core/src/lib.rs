@@ -1,6 +1,7 @@
 //! C Launcher'ın işletim sisteminden bağımsız mantığı: katalog, sürüm karşılaştırma,
 //! release dosyası seçimi, SHA-256 listesi ve uygulama durumu.
 
+pub mod brand;
 pub mod catalog;
 pub mod paths;
 pub mod select;
@@ -8,6 +9,7 @@ pub mod status;
 pub mod sums;
 pub mod version;
 
+pub use brand::{Brand, Login, Source};
 pub use catalog::{App, Catalog, Group, Method, PlatformSpec, Portable};
 pub use status::Status;
 pub use version::Version;

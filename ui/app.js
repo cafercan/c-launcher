@@ -158,8 +158,16 @@ function render() {
   $('#content').innerHTML = html || '<p class="empty">Eşleşen uygulama yok</p>';
 
   $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${data.source === 'github' ? 'GITHUB' : data.source === 'cache' ? 'ÖNBELLEK (ÇEVRİMDIŞI)' : 'GÖMÜLÜ LİSTE'}`;
-  $('#target').textContent = `C LAUNCHER ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
+  $('#target').textContent = `${data.brand_name.toLocaleUpperCase('tr')} ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
+  renderBrand();
   renderBanner();
+}
+
+function renderBrand() {
+  const name = data.brand_name;
+  document.title = name;
+  $('#brand').innerHTML = `<span class="logo">${esc((name[0] || '?').toLocaleUpperCase('tr'))}</span>${esc(name.toLocaleUpperCase('tr'))}`;
+  $('#home').dataset.url = data.home_url;
 }
 
 function renderBanner() {
@@ -171,11 +179,11 @@ function renderBanner() {
     const text = job.phase === 'download' && job.total
       ? `İndiriliyor ${mb(job.done)} / ${mb(job.total)} · %${Math.round(job.done / job.total * 100)}`
       : (PHASE[job.phase] || 'Hazırlanıyor') + '…';
-    banner.innerHTML = `C Launcher ${esc(data.launcher_latest)} güncelleniyor: ${text}`;
+    banner.innerHTML = `${esc(data.brand_name)} ${esc(data.launcher_latest)} güncelleniyor: ${text}`;
     return;
   }
   const err = errors['c-launcher'] ? ` <span class="err">${esc(errors['c-launcher'])}</span>` : '';
-  banner.innerHTML = `<span>C Launcher ${esc(data.launcher_latest)} yayında.</span>
+  banner.innerHTML = `<span>${esc(data.brand_name)} ${esc(data.launcher_latest)} yayında.</span>
     <button class="btn" id="selfUpdate">GÜNCELLE VE YENİDEN BAŞLAT</button>
     <a href="#" data-url="${esc(data.launcher_url)}">Sürüm notları ↗</a>${err}`;
 }
@@ -372,6 +380,7 @@ function mock(cmd, args) {
   const base = {
     groups: [{ id: 'desktop', title: 'Masaüstü uygulamaları' }, { id: 'terminal', title: 'Terminal araçları' }, { id: 'chrome', title: 'Chrome eklentileri' }],
     os: 'linux', source: 'github', checked_at: now - 180, launcher_version: '0.1.0', launcher_latest: null, launcher_url: '',
+    brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: false,
     apps: [
       { id: 'kitaplik', name: 'Kitaplık', repo: 'cafercan/kitaplik', group: 'desktop', description: 'E-kitap kitaplığı: etiket, filtre, kalite puanı', accent: '#2f6f5e', icon: 'https://raw.githubusercontent.com/cafercan/kitaplik/main/kitaplik.svg', method: 'deb', status: 'update_available', installed: '0.1.0', installed_known: true, latest: '0.2.0', published_at: '2026-10-25T10:00:00Z', size: 31000, needs_reload: false },
       { id: 'mdviewer', name: 'MD Flow Viewer', repo: 'cafercan/MDViewer', group: 'desktop', description: 'Markdown görüntüleyici ve düzenleyici: canlı yenileme, Mermaid', accent: '#3b6fd4', icon: 'https://raw.githubusercontent.com/cafercan/MDViewer/main/public/favicon-192.png', method: 'deb', status: 'not_installed', installed: null, installed_known: false, latest: '2.9.0', published_at: '2026-10-12T10:00:00Z', size: 48200000, needs_reload: false },

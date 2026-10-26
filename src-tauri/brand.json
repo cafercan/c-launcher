@@ -1,0 +1,9 @@
+{
+  "name": "C Launcher",
+  "data_dir": "c-launcher",
+  "launcher_repo": "cafercan/c-launcher",
+  "home_url": "https://github.com/cafercan",
+  "sources": [
+    { "repo": "cafercan/c-launcher", "embedded": true }
+  ]
+}

@@ -68,6 +68,9 @@ struct Overview {
     launcher_version: &'static str,
     launcher_latest: Option<String>,
     launcher_url: String,
+    brand_name: &'static str,
+    home_url: &'static str,
+    group_tabs: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -93,7 +96,7 @@ async fn fetch(state: &AppState) -> Loaded {
         let (http, cache, repo, id) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone());
         async move { (id, github::latest_release(&http, &repo, &cache).await) }
     });
-    let (releases, launcher) = tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, github::LAUNCHER_REPO, &cache));
+    let (releases, launcher) = tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, &github::BRAND.launcher_repo, &cache));
     Loaded { catalog, releases: releases.into_iter().collect(), launcher_latest: launcher.ok().flatten(), source, checked_at: now() }
 }
 
@@ -164,7 +167,10 @@ fn overview_of(loaded: &Loaded, state: &AppState) -> Overview {
         checked_at: loaded.checked_at,
         launcher_version: env!("CARGO_PKG_VERSION"),
         launcher_latest,
-        launcher_url: format!("https://github.com/{}/releases/latest", github::LAUNCHER_REPO),
+        launcher_url: format!("https://github.com/{}/releases/latest", github::BRAND.launcher_repo),
+        brand_name: &github::BRAND.name,
+        home_url: &github::BRAND.home_url,
+        group_tabs: github::BRAND.group_tabs,
     }
 }
 
@@ -355,7 +361,7 @@ fn cli_self_update() -> i32 {
     runtime.block_on(async {
         let store = Store::open();
         let http = github::client();
-        let release = match github::latest_release(&http, github::LAUNCHER_REPO, &store.dir("cache")).await {
+        let release = match github::latest_release(&http, &github::BRAND.launcher_repo, &store.dir("cache")).await {
             Ok(Some(r)) => r,
             Ok(None) => {
                 eprintln!("henüz release yok");
@@ -368,14 +374,14 @@ fn cli_self_update() -> i32 {
         };
         let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
         if !version_of(&release).is_some_and(|v| v > current) {
-            println!("C Launcher {current} güncel");
+            println!("{} {current} güncel", github::BRAND.name);
             return 0;
         }
         let progress = |_: &str, _: u64, _: u64| {};
         let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress };
         match selfupdate::run(&release, &ctx, false).await {
             Ok(()) => {
-                println!("C Launcher {current} → {} güncellendi", release.tag_name);
+                println!("{} {current} → {} güncellendi", github::BRAND.name, release.tag_name);
                 0
             }
             Err(e) => {
@@ -416,5 +422,5 @@ fn main() {
             open_chrome_extensions
         ])
         .run(tauri::generate_context!())
-        .expect("C Launcher başlatılamadı");
+        .expect("launcher başlatılamadı");
 }

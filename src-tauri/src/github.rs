@@ -3,12 +3,13 @@
 //! (304 Not Modified) bu sınırdan düşmez.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
-use launcher_core::Catalog;
+use launcher_core::{Brand, Catalog};
 use serde::{Deserialize, Serialize};
 
-pub const CATALOG_URL: &str = "https://raw.githubusercontent.com/cafercan/c-launcher/main/catalog.json";
-pub const LAUNCHER_REPO: &str = "cafercan/c-launcher";
+/// Bu derlemenin adı, veri klasörü, katalog kaynakları ve güncelleme deposu
+pub static BRAND: LazyLock<Brand> = LazyLock::new(|| Brand::parse(include_str!("../brand.json")).expect("brand.json geçerli olmalı"));
 const EMBEDDED_CATALOG: &str = include_str!("../../catalog.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +54,9 @@ pub fn client() -> reqwest::Client {
 /// uygulamaya gömülü liste. İkinci değer listenin nereden geldiğini söyler.
 pub async fn catalog(http: &reqwest::Client, cache_dir: &Path) -> (Catalog, &'static str) {
     let cache = cache_dir.join("catalog.json");
-    if let Ok(resp) = http.get(CATALOG_URL).send().await.and_then(|r| r.error_for_status()) {
+    let src = &BRAND.sources[0];
+    let url = format!("https://raw.githubusercontent.com/{}/{}/{}", src.repo, src.branch, src.path);
+    if let Ok(resp) = http.get(url).send().await.and_then(|r| r.error_for_status()) {
         if let Ok(text) = resp.text().await {
             if let Ok(c) = Catalog::parse(&text) {
                 let _ = std::fs::write(&cache, &text);

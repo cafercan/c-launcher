@@ -195,7 +195,7 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-fn valid_repo(repo: &str) -> bool {
+pub(crate) fn valid_repo(repo: &str) -> bool {
     let ok = |s: &str| !s.is_empty() && s != "." && s != ".." && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
     matches!(repo.split_once('/'), Some((owner, name)) if ok(owner) && ok(name))
 }

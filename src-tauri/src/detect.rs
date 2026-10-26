@@ -2,9 +2,9 @@
 //! Elle kurulmuş uygulamalar da bulunur: launcher'ın kendi kaydına güvenilmez,
 //! mümkün olan her yerde sistemin kendisine bakılır.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use launcher_core::{Method, PlatformSpec};
+use launcher_core::{App, Method, PlatformSpec};
 
 use crate::store::Store;
 
@@ -51,6 +51,12 @@ pub fn installed(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Install
                 _ => None,
             }
         }
+        Method::Exe | Method::Zip => {
+            let record = store.record(id);
+            let dir = portable_location(record.as_ref().and_then(|r| r.location.as_deref()).map(Path::new), &portable_default_dir(store, id), spec, id, |p| p.exists())?;
+            let exe = portable_exe(&dir, spec, id);
+            Some(Installed { version: record.map(|r| r.version), target: Some(exe), ..Default::default() })
+        }
         Method::Chrome => {
             let dir = extension_dir(store, id);
             let manifest = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
@@ -68,6 +74,43 @@ fn portable(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Installed> {
     let record = store.record(id)?;
     let run = PathBuf::from(record.location?).join(&p.run);
     run.exists().then(|| Installed { version: Some(record.version), target: Some(run), portable: true, ..Default::default() })
+}
+
+/// Windows kurulumsuz uygulamanın varsayılan klasörü: seçilen kurulum klasörü, yoksa
+/// %LOCALAPPDATA%\Programs\<launcher> altında uygulamanın kimliği.
+pub fn portable_default_dir(store: &Store, id: &str) -> PathBuf {
+    let root = store.install_root().unwrap_or_else(|| {
+        dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("Programs").join(&crate::github::BRAND.data_dir)
+    });
+    root.join(id)
+}
+
+/// Kurulumsuz uygulamanın çalıştırılacak dosyası.
+pub fn portable_exe(dir: &Path, spec: &PlatformSpec, id: &str) -> PathBuf {
+    match spec.method {
+        Method::Zip => dir.join(spec.run.as_deref().unwrap_or_default()),
+        _ => dir.join(spec.app.clone().unwrap_or_else(|| format!("{id}.exe"))),
+    }
+}
+
+/// Kurulu kopyanın klasörü: önce launcher'ın kaydettiği yer, sonra varsayılan klasör.
+/// Çalıştırılacak dosya orada yoksa kurulu sayılmaz.
+fn portable_location(record: Option<&Path>, default: &Path, spec: &PlatformSpec, id: &str, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    record.into_iter().chain([default]).find(|d| exists(&portable_exe(d, spec, id))).map(Path::to_path_buf)
+}
+
+/// Başlat menüsündeki kısayol: launcher adında bir klasörün içinde uygulamanın adı.
+pub fn start_menu_shortcut(app: &App) -> PathBuf {
+    let name: String = app.name.chars().filter(|c| !"<>:\"/\\|?*".contains(*c) && !c.is_control()).collect();
+    let brand: String = crate::github::BRAND.name.chars().filter(|c| !"<>:\"/\\|?*".contains(*c)).collect();
+    dirs::data_dir()
+        .unwrap_or_default()
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs")
+        .join(brand.trim())
+        .join(format!("{}.lnk", name.trim()))
 }
 
 /// Chrome eklentisinin klasörü: ilk kurulduğu yer hiç değişmez, çünkü Chrome onu oradan okur.
@@ -164,6 +207,31 @@ fn debian_upstream(v: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn exe_spec() -> PlatformSpec {
+        serde_json::from_str(r#"{"method":"exe","asset":"Tool-v*.exe","app":"Tool.exe"}"#).unwrap()
+    }
+
+    #[test]
+    fn portable_location_order() {
+        let spec = exe_spec();
+        let (rec, def) = (Path::new("C:/rec"), Path::new("C:/def"));
+        let only = |hit: &'static str| move |p: &Path| p == Path::new(hit);
+        assert_eq!(portable_location(Some(rec), def, &spec, "tool", only("C:/rec/Tool.exe")), Some(rec.to_path_buf()));
+        assert_eq!(portable_location(Some(rec), def, &spec, "tool", only("C:/def/Tool.exe")), Some(def.to_path_buf()));
+        assert_eq!(portable_location(None, def, &spec, "tool", only("C:/def/Tool.exe")), Some(def.to_path_buf()));
+        assert_eq!(portable_location(Some(rec), def, &spec, "tool", |_| false), None);
+    }
+
+    #[test]
+    fn portable_exe_paths() {
+        let zip: PlatformSpec = serde_json::from_str(r#"{"method":"zip","asset":"t.zip","run":"bin/tool.exe"}"#).unwrap();
+        assert_eq!(portable_exe(Path::new("C:/a"), &zip, "t"), Path::new("C:/a/bin/tool.exe"));
+        let bare: PlatformSpec = serde_json::from_str(r#"{"method":"exe","asset":"t.exe"}"#).unwrap();
+        assert_eq!(portable_exe(Path::new("C:/a"), &bare, "tool"), Path::new("C:/a/tool.exe"));
+    }
+
     #[test]
     fn strips_debian_revision() {
         assert_eq!(super::debian_upstream("1:2.9.0-1ubuntu2"), "2.9.0");

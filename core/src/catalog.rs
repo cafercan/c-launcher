@@ -57,6 +57,10 @@ pub enum Method {
     Script,
     /// Paketlenmemiş Chrome eklentisi (.zip)
     Chrome,
+    /// Windows: kurulumsuz çalışan tek .exe
+    Exe,
+    /// Windows: kurulumsuz uygulama klasörü (.zip, kökünde tek klasör)
+    Zip,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,13 +71,13 @@ pub struct PlatformSpec {
     pub asset: Option<String>,
     #[serde(default)]
     pub inno_app_id: Option<String>,
-    /// macOS: /Applications altındaki paket adı
+    /// macOS: /Applications altındaki paket adı; `exe` yöntemi: diskteki dosya adı
     #[serde(default)]
     pub app: Option<String>,
     /// Linux: dpkg paket adı
     #[serde(default)]
     pub package: Option<String>,
-    /// Linux: uygulamayı başlatan komut
+    /// Linux: uygulamayı başlatan komut; `zip` yöntemi: arşivdeki tek klasörün içinde çalıştırılacak .exe
     #[serde(default)]
     pub run: Option<String>,
     /// Betik yöntemi: depo kökündeki kurulum/kaldırma betikleri
@@ -173,6 +177,21 @@ impl Catalog {
                     }
                     Method::Script => need(&spec.install, "install")?,
                     Method::Chrome => need(&spec.asset, "asset")?,
+                    Method::Exe | Method::Zip => {
+                        if os != "windows" {
+                            let m = if spec.method == Method::Exe { "exe" } else { "zip" };
+                            return Err(format!("{where_}: {m} yöntemi yalnızca windows için"));
+                        }
+                        need(&spec.asset, "asset")?;
+                        let exe_ok = |p: &str| crate::paths::is_plain_relative(p) && p.to_ascii_lowercase().ends_with(".exe");
+                        if spec.method == Method::Zip && !spec.run.as_deref().is_some_and(exe_ok) {
+                            return Err(format!("{where_}: run, arşivdeki klasörün içinde bir .exe yolu olmalı"));
+                        }
+                        // dosya adı tek parça olmalı: klasör adı ya da üst klasör olamaz
+                        if spec.method == Method::Exe && spec.app.as_deref().is_some_and(|a| !exe_ok(a) || a.contains('/')) {
+                            return Err(format!("{where_}: app bir .exe dosya adı olmalı"));
+                        }
+                    }
                 }
                 if let Some(p) = &spec.portable {
                     if p.asset.is_empty() || !crate::paths::is_plain_relative(&p.run) || p.icon.as_deref().is_some_and(|i| !crate::paths::is_plain_relative(i)) {
@@ -316,6 +335,22 @@ mod tests {
         let m = merge(vec![(a, None, false), (b, None, false)]);
         let ids: Vec<&str> = m.groups.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(ids, ["desktop", "chrome", "terminal"]);
+    }
+
+    #[test]
+    fn portable_methods_validate() {
+        let one = |os: &str, spec: &str| with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"{os}":{spec}}}}}"#));
+        assert!(one("windows", r#"{"method":"exe"}"#).is_err());
+        assert!(one("windows", r#"{"method":"exe","asset":"Tool-v*.exe"}"#).is_ok());
+        assert!(one("windows", r#"{"method":"exe","asset":"Tool-v*.exe","app":"Tool.exe"}"#).is_ok());
+        assert!(one("windows", r#"{"method":"exe","asset":"Tool-v*.exe","app":"../Tool.exe"}"#).is_err());
+        assert!(one("linux", r#"{"method":"exe","asset":"Tool-v*.exe"}"#).is_err());
+        assert!(one("any", r#"{"method":"zip","asset":"t.zip","run":"tool.exe"}"#).is_err());
+        assert!(one("windows", r#"{"method":"zip","asset":"t.zip"}"#).is_err());
+        assert!(one("windows", r#"{"method":"zip","asset":"t.zip","run":"../tool.exe"}"#).is_err());
+        assert!(one("windows", r#"{"method":"zip","asset":"t.zip","run":"tool.txt"}"#).is_err());
+        assert!(one("windows", r#"{"method":"zip","asset":"t.zip","run":"tool.exe"}"#).is_ok());
+        assert!(one("windows", r#"{"method":"zip","asset":"t.zip","run":"bin/tool.exe"}"#).is_ok());
     }
 
     #[test]

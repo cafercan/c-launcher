@@ -49,6 +49,10 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
     let file = ctx.store.dir("downloads").join(&asset.name);
     let digest = download(ctx, asset_url(&asset.url, &asset.browser_download_url, app.private), &file, asset.size).await?;
     let verified = verify(ctx, release, &asset.name, &digest, app.private).await?;
+    if let Err(e) = sums_required(spec.method, verified) {
+        let _ = std::fs::remove_file(&file);
+        return Err(e);
+    }
     (ctx.progress)("install", 0, 0);
     let file2 = file.clone();
     let note = match spec.method {
@@ -85,6 +89,18 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
                 (None, None) => ctx.store.dir("extensions").join(&app.id),
             };
             install_chrome(&app.id, &file, &version, &dir, ctx.store)?
+        }
+        Method::Exe | Method::Zip => {
+            let dir = match before.as_ref().and_then(|i| i.target.as_deref()) {
+                // güncellemede bulunduğu klasörde kalır
+                Some(exe) if spec.method == Method::Exe => exe.parent().map(Path::to_path_buf).ok_or("kurulum yeri bulunamadı")?,
+                Some(_) => ctx.store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).unwrap_or_else(|| detect::portable_default_dir(ctx.store, &app.id)),
+                None => detect::portable_default_dir(ctx.store, &app.id),
+            };
+            let (app2, spec2, dir2) = (app.clone(), spec.clone(), dir.clone());
+            let note = blocking(move || install_portable_windows(&app2, &spec2, &file2, &dir2)).await?;
+            ctx.store.set_record(&app.id, Some(Record { version: version.clone(), location: Some(dir.display().to_string()), ..Default::default() }));
+            note
         }
         Method::Script => unreachable!(),
     };
@@ -346,6 +362,116 @@ fn install_chrome(id: &str, zip_file: &Path, version: &str, dir: &Path, store: &
     })
 }
 
+// ------------------------------------------------------------------ Windows: kurulumsuz uygulama
+
+/// Kurulumsuz yöntemlerde özet listesi zorunlu: doğrulanmamış bir .exe çalıştırılmaz.
+fn sums_required(method: Method, verified: bool) -> Result<(), String> {
+    match method {
+        Method::Exe | Method::Zip if !verified => Err("release'te SHA256SUMS.txt yok, dosya kurulmadı".into()),
+        _ => Ok(()),
+    }
+}
+
+/// Dosya ya da klasör kullanımdaysa (uygulama açık) Windows'un verdiği hatayı anlaşılır kılar.
+fn locked(e: std::io::Error) -> String {
+    match e.raw_os_error() {
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+        Some(5 | 32 | 33) => "uygulama açık, kapatıp tekrar deneyin".into(),
+        _ => e.to_string(),
+    }
+}
+
+fn install_portable_windows(app: &App, spec: &PlatformSpec, file: &Path, dir: &Path) -> Result<String, String> {
+    match spec.method {
+        Method::Exe => {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{} oluşturulamadı: {e}", dir.display()))?;
+            replace_exe(file, &detect::portable_exe(dir, spec, &app.id))?;
+        }
+        _ => {
+            let staging = dir.with_file_name(format!("{}.new", app.id));
+            let _ = std::fs::remove_dir_all(&staging);
+            extract_zip(file, &staging, Strip::FirstDir)?;
+            let run = spec.run.as_deref().unwrap_or_default();
+            if !staging.join(run).is_file() {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(format!("arşivde {run} yok (zip'in kökünde tek bir klasör olmalı)"));
+            }
+            swap_dir(&staging, dir)?;
+        }
+    }
+    // kısayol olmasa da uygulama launcher'dan açılır: hata kurulumu bozmaz
+    let exe = detect::portable_exe(dir, spec, &app.id);
+    let note = match write_shortcut(&detect::start_menu_shortcut(app), &exe, dir) {
+        Ok(()) => "Kuruldu; Başlat menüsünde de bulunur".to_string(),
+        Err(e) => format!("Kuruldu (Başlat menüsü kısayolu eklenemedi: {e})"),
+    };
+    Ok(note)
+}
+
+/// Yeni .exe'yi önce yanına kopyalar, sonra eskisinin üzerine taşır: yarım kalmış bir dosya
+/// hiçbir zaman uygulamanın yerinde durmaz.
+fn replace_exe(new: &Path, target: &Path) -> Result<(), String> {
+    let staged = target.with_extension("exe.new");
+    std::fs::copy(new, &staged).map_err(|e| format!("dosya yazılamadı: {e}"))?;
+    std::fs::rename(&staged, target).map_err(|e| {
+        let _ = std::fs::remove_file(&staged);
+        locked(e)
+    })
+}
+
+/// Hazırlanan klasörü eskisinin yerine koyar; ikinci adım başarısız olursa eski klasör geri gelir.
+fn swap_dir(new: &Path, target: &Path) -> Result<(), String> {
+    let old = target.with_file_name(format!("{}.old", target.file_name().and_then(|n| n.to_str()).unwrap_or("app")));
+    let _ = std::fs::remove_dir_all(&old);
+    let had_old = target.exists();
+    if had_old {
+        std::fs::rename(target, &old).map_err(|e| {
+            let _ = std::fs::remove_dir_all(new);
+            locked(e)
+        })?;
+    } else if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if let Err(e) = std::fs::rename(new, target) {
+        if had_old {
+            let _ = std::fs::rename(&old, target);
+        }
+        let _ = std::fs::remove_dir_all(new);
+        return Err(locked(e));
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Başlat menüsü kısayolu (Windows aramasında da çıkar). Yollar komut satırına değil ortam
+/// değişkenlerine konur: adlardaki tırnak ya da $ işaretleri betiği bozamaz.
+#[cfg(windows)]
+fn write_shortcut(lnk: &Path, exe: &Path, dir: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    if let Some(parent) = lnk.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let script = "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:CL_LNK); $s.TargetPath = $env:CL_EXE; $s.WorkingDirectory = $env:CL_DIR; $s.Save()";
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("CL_LNK", lnk)
+        .env("CL_EXE", exe)
+        .env("CL_DIR", dir)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() && lnk.exists() {
+        Ok(())
+    } else {
+        Err(output_tail(&out))
+    }
+}
+
+#[cfg(not(windows))]
+fn write_shortcut(_lnk: &Path, _exe: &Path, _dir: &Path) -> Result<(), String> {
+    Err("yalnızca Windows'ta".into())
+}
+
 // ------------------------------------------------------------------ Linux: taşınabilir paket
 
 fn desktop_file(id: &str) -> PathBuf {
@@ -587,6 +713,24 @@ pub fn uninstall(app: &App, spec: &PlatformSpec, store: &Store) -> Result<String
                 let _ = std::fs::remove_dir_all(&src);
             })
         }
+        Method::Exe | Method::Zip => {
+            let exe = found.and_then(|i| i.target).ok_or("uygulama bulunamadı")?;
+            let dir = exe.parent().ok_or("kurulum yeri bulunamadı")?;
+            // zip'te klasörün tamamı uygulamanındır; exe'de klasörde yalnızca o dosya silinir
+            let dir = match spec.method {
+                Method::Zip => store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).unwrap_or_else(|| detect::portable_default_dir(store, &app.id)),
+                _ => dir.to_path_buf(),
+            };
+            match spec.method {
+                Method::Zip => std::fs::remove_dir_all(&dir).map_err(locked)?,
+                _ => {
+                    std::fs::remove_file(&exe).map_err(locked)?;
+                    let _ = std::fs::remove_dir(&dir); // boşsa
+                }
+            }
+            let _ = std::fs::remove_file(detect::start_menu_shortcut(app));
+            Ok("Kaldırıldı".into())
+        }
         Method::Chrome => {
             let dir = detect::extension_dir(store, &app.id);
             std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -617,7 +761,75 @@ fn run_windows_command(_cmd: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::inno_exit;
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("c-launcher-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn portable_requires_sums() {
+        assert_eq!(sums_required(Method::Exe, false).unwrap_err(), "release'te SHA256SUMS.txt yok, dosya kurulmadı");
+        assert!(sums_required(Method::Zip, false).is_err());
+        assert!(sums_required(Method::Zip, true).is_ok());
+        // eski yöntemler eskisi gibi: uyarıyla kurulur
+        assert!(sums_required(Method::Inno, false).is_ok());
+    }
+
+    #[test]
+    fn zip_update_swaps_folder() {
+        let d = temp("swap");
+        let (target, new) = (d.join("tool"), d.join("tool.new"));
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("settings.txt"), "eski").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("tool.exe"), "yeni").unwrap();
+        swap_dir(&new, &target).unwrap();
+        assert!(target.join("tool.exe").exists() && !target.join("settings.txt").exists());
+        assert!(!new.exists() && !d.join("tool.old").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn zip_update_keeps_old_folder_when_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = temp("swaplock");
+        let (target, new) = (d.join("tool"), d.join("tool.new"));
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("tool.exe"), "eski").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("tool.exe"), "yeni").unwrap();
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(target.join("tool.exe")).unwrap();
+        let err = swap_dir(&new, &target).unwrap_err();
+        drop(held);
+        assert!(err.contains("uygulama açık"), "{err}");
+        assert_eq!(std::fs::read_to_string(target.join("tool.exe")).unwrap(), "eski");
+        assert!(!new.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exe_update_keeps_old_file_on_failure() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = temp("exe");
+        let (target, new) = (d.join("Tool.exe"), d.join("download.exe"));
+        std::fs::write(&target, "eski").unwrap();
+        std::fs::write(&new, "yeni").unwrap();
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&target).unwrap();
+        let err = replace_exe(&new, &target).unwrap_err();
+        drop(held);
+        assert!(err.contains("uygulama açık"), "{err}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "eski");
+        assert!(!d.join("Tool.exe.new").exists());
+        replace_exe(&new, &target).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "yeni");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn inno_exit_codes_are_told_apart() {

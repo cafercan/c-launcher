@@ -37,6 +37,10 @@ pub fn open_app(spec: &PlatformSpec, installed: &Installed) -> Result<(), String
             let app = installed.target.as_deref().ok_or("uygulama bulunamadı")?;
             spawn(Command::new("open").arg(app))
         }
+        Method::Exe | Method::Zip => {
+            let exe = installed.target.as_deref().filter(|p| p.exists()).ok_or("uygulamanın çalıştırılabilir dosyası bulunamadı")?;
+            spawn(Command::new(exe).current_dir(exe.parent().unwrap_or(Path::new("."))))
+        }
         Method::Deb if installed.portable => {
             let run = installed.target.as_deref().ok_or("uygulama bulunamadı")?;
             spawn(Command::new(run).current_dir(run.parent().unwrap_or(Path::new("."))))

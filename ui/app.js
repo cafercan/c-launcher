@@ -19,6 +19,9 @@ const STATUS = {
 };
 const OS_NAME = { windows: 'WINDOWS', macos: 'MACOS', linux: 'LINUX' };
 const PHASE = { download: 'İndiriliyor', verify: 'Doğrulanıyor', install: 'Kuruluyor' };
+const SOURCE = { github: 'GITHUB', cache: 'ÖNBELLEK (ÇEVRİMDIŞI)', embedded: 'GÖMÜLÜ LİSTE', none: 'LİSTE ALINAMADI' };
+// alt çubukta en kötü durumdaki kaynak görünür; giriş bekleyen kaynak hata sayılmaz
+const worstSource = () => ['none', 'embedded', 'cache'].find(f => data.sources.some(s => s.from === f)) || 'github';
 
 let data = null;
 let view = localStorage.getItem('view') || 'grid';
@@ -157,7 +160,7 @@ function render() {
   });
   $('#content').innerHTML = html || '<p class="empty">Eşleşen uygulama yok</p>';
 
-  $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${data.source === 'github' ? 'GITHUB' : data.source === 'cache' ? 'ÖNBELLEK (ÇEVRİMDIŞI)' : 'GÖMÜLÜ LİSTE'}`;
+  $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${SOURCE[worstSource()]}`;
   $('#target').textContent = `${data.brand_name.toLocaleUpperCase('tr')} ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
   renderBrand();
   renderBanner();
@@ -379,7 +382,7 @@ function mock(cmd, args) {
   const now = Date.now() / 1000;
   const base = {
     groups: [{ id: 'desktop', title: 'Masaüstü uygulamaları' }, { id: 'terminal', title: 'Terminal araçları' }, { id: 'chrome', title: 'Chrome eklentileri' }],
-    os: 'linux', source: 'github', checked_at: now - 180, launcher_version: '0.1.0', launcher_latest: null, launcher_url: '',
+    os: 'linux', sources: [{ repo: 'cafercan/c-launcher', group: null, from: 'github', error: null }], checked_at: now - 180, launcher_version: '0.1.0', launcher_latest: null, launcher_url: '',
     brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: false,
     apps: [
       { id: 'kitaplik', name: 'Kitaplık', repo: 'cafercan/kitaplik', group: 'desktop', description: 'E-kitap kitaplığı: etiket, filtre, kalite puanı', accent: '#2f6f5e', icon: 'https://raw.githubusercontent.com/cafercan/kitaplik/main/kitaplik.svg', method: 'deb', status: 'update_available', installed: '0.1.0', installed_known: true, latest: '0.2.0', published_at: '2026-10-25T10:00:00Z', size: 31000, needs_reload: false },

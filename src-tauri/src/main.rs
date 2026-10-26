@@ -23,7 +23,7 @@ struct Loaded {
     catalog: Catalog,
     releases: HashMap<String, Result<Option<Release>, String>>,
     launcher_latest: Option<Release>,
-    source: &'static str,
+    sources: Vec<github::SourceState>,
     checked_at: u64,
 }
 
@@ -63,7 +63,7 @@ struct Overview {
     groups: Vec<Group>,
     apps: Vec<AppView>,
     os: &'static str,
-    source: &'static str,
+    sources: Vec<github::SourceState>,
     checked_at: u64,
     launcher_version: &'static str,
     launcher_latest: Option<String>,
@@ -91,13 +91,13 @@ fn version_of(release: &Release) -> Option<Version> {
 
 async fn fetch(state: &AppState) -> Loaded {
     let cache = state.store.dir("cache");
-    let (catalog, source) = github::catalog(&state.http, &cache).await;
+    let (catalog, sources) = github::catalog(&state.http, &cache, None).await;
     let tasks = catalog.apps.iter().map(|a| {
         let (http, cache, repo, id) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone());
         async move { (id, github::latest_release(&http, &repo, &cache).await) }
     });
     let (releases, launcher) = tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, &github::BRAND.launcher_repo, &cache));
-    Loaded { catalog, releases: releases.into_iter().collect(), launcher_latest: launcher.ok().flatten(), source, checked_at: now() }
+    Loaded { catalog, releases: releases.into_iter().collect(), launcher_latest: launcher.ok().flatten(), sources, checked_at: now() }
 }
 
 fn view(app: &App, loaded: &Loaded, state: &AppState) -> AppView {
@@ -163,7 +163,7 @@ fn overview_of(loaded: &Loaded, state: &AppState) -> Overview {
         groups: loaded.catalog.groups.clone(),
         apps: loaded.catalog.apps.iter().map(|a| view(a, loaded, state)).collect(),
         os: Os::current().key(),
-        source: loaded.source,
+        sources: loaded.sources.clone(),
         checked_at: loaded.checked_at,
         launcher_version: env!("CARGO_PKG_VERSION"),
         launcher_latest,

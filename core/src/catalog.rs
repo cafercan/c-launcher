@@ -39,6 +39,9 @@ pub struct App {
     pub usage: Option<String>,
     /// Anahtarlar: "windows", "macos", "linux" ya da her sistem için "any"
     pub platforms: BTreeMap<String, PlatformSpec>,
+    /// Girişle okunan bir katalogdan geldi: release'leri de girişle okunur
+    #[serde(skip)]
+    pub private: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +193,34 @@ impl Catalog {
     }
 }
 
+/// Birden çok kaynağın kataloglarını sırayla birleştirir. Aynı kimlik iki kaynakta varsa
+/// öndeki kazanır. Grup verilmiş bir kaynağın bütün uygulamaları o gruba taşınır.
+pub fn merge(parts: Vec<(Catalog, Option<Group>, bool)>) -> Catalog {
+    let mut out = Catalog { schema: SCHEMA, groups: Vec::new(), apps: Vec::new() };
+    for (catalog, group, private) in parts {
+        let groups = match &group {
+            Some(g) => vec![g.clone()],
+            None => catalog.groups,
+        };
+        for g in groups {
+            if !out.groups.iter().any(|x| x.id == g.id) {
+                out.groups.push(g);
+            }
+        }
+        for mut app in catalog.apps {
+            if out.apps.iter().any(|a| a.id == app.id) {
+                continue;
+            }
+            if let Some(g) = &group {
+                app.group = g.id.clone();
+            }
+            app.private = private;
+            out.apps.push(app);
+        }
+    }
+    out
+}
+
 /// Uygulama kimliği klasör adı olarak da kullanılır: yalnızca küçük harf, rakam ve tire.
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -247,6 +278,44 @@ mod tests {
         Catalog::parse(&format!(
             r#"{{"schema":1,"groups":[{{"id":"desktop","title":"D"}}],"apps":[{app_json}]}}"#
         ))
+    }
+
+    fn cat(groups: &[&str], apps: &[(&str, &str)]) -> Catalog {
+        let groups: Vec<String> = groups.iter().map(|g| format!(r#"{{"id":"{g}","title":"{g}"}}"#)).collect();
+        let apps: Vec<String> = apps.iter().map(|(id, g)| format!(r#"{{"id":"{id}","repo":"example-org/{id}","name":"{id}","group":"{g}","platforms":{{}}}}"#)).collect();
+        Catalog::parse(&format!(r#"{{"schema":1,"groups":[{}],"apps":[{}]}}"#, groups.join(","), apps.join(","))).unwrap()
+    }
+
+    #[test]
+    fn merge_moves_apps_into_override_group() {
+        let a = cat(&["tools"], &[("t", "tools")]);
+        let b = cat(&["desktop", "chrome"], &[("x", "desktop"), ("y", "chrome")]);
+        let shared = Group { id: "shared".into(), title: "Ortak uygulamalar".into() };
+        let m = merge(vec![(a, None, true), (b, Some(shared), false)]);
+        let ids: Vec<&str> = m.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(ids, ["tools", "shared"]);
+        assert!(m.apps.iter().filter(|a| a.id != "t").all(|a| a.group == "shared" && !a.private));
+        assert!(m.apps.iter().find(|a| a.id == "t").unwrap().private);
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn merge_drops_duplicate_ids() {
+        let a = cat(&["desktop"], &[("x", "desktop")]);
+        let mut b = cat(&["desktop"], &[("x", "desktop")]);
+        b.apps[0].name = "B".into();
+        let m = merge(vec![(a, None, false), (b, None, false)]);
+        assert_eq!(m.apps.len(), 1);
+        assert_eq!(m.apps[0].name, "x");
+    }
+
+    #[test]
+    fn merge_keeps_group_order() {
+        let a = cat(&["desktop", "chrome"], &[]);
+        let b = cat(&["terminal", "desktop"], &[]);
+        let m = merge(vec![(a, None, false), (b, None, false)]);
+        let ids: Vec<&str> = m.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(ids, ["desktop", "chrome", "terminal"]);
     }
 
     #[test]

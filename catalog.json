@@ -94,6 +94,18 @@
       "platforms": {
         "any": { "method": "chrome", "asset": "kedy-chrome-extension-*.zip" }
       }
+    },
+    {
+      "id": "yerimi-menusu",
+      "name": "Yer İmi Menüsü",
+      "repo": "cafercan/yerimi-menusu",
+      "group": "chrome",
+      "description": "Yer imleri çubuğunu araç çubuğundaki düğmeden açar",
+      "accent": "#1a73e8",
+      "icon": "https://raw.githubusercontent.com/cafercan/yerimi-menusu/main/icons/icon128.png",
+      "platforms": {
+        "any": { "method": "chrome", "asset": "yerimi-menusu-*.zip" }
+      }
     }
   ]
 }

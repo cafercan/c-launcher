@@ -186,18 +186,38 @@ pub(crate) fn output_tail(out: &std::process::Output) -> String {
 // ------------------------------------------------------------------ Windows: Inno Setup
 
 fn run_inno(file: &Path, dir: Option<PathBuf>) -> Result<String, String> {
+    let log = file.with_extension("log");
     let mut cmd = Command::new(file);
-    cmd.args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CLOSEAPPLICATIONS"]);
+    // Açık uygulama Restart Manager ile kapatılır, kurulumdan sonra yeniden açılır.
+    // Kapanma isteğine yanıt vermeyen (ör. hata penceresinde takılmış) süreç zorla
+    // kapatılır; yoksa dosyaları kilitli kalır ve kurulum yarıda kesilir.
+    cmd.args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS"]);
+    cmd.arg(format!("/LOG={}", log.display()));
     if let Some(d) = dir {
         cmd.arg(format!("/DIR={}", d.display()));
     }
     let status = cmd
         .status()
         .map_err(|e| format!("kurulum başlatılamadı: {e}"))?;
-    match status.code() {
-        Some(0) => Ok("Kuruldu".into()),
-        // Inno: 2 = kullanıcı iptal etti (ör. yönetici izni verilmedi)
-        Some(2) | Some(5) => Err("kurulum iptal edildi ya da yönetici izni verilmedi".into()),
+    match inno_exit(status.code()) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&log);
+            Ok("Kuruldu".into())
+        }
+        Err(reason) => Err(format!("{reason} · ayrıntı: {}", log.display())),
+    }
+}
+
+/// Inno Setup çıkış kodunun anlamı (https://jrsoftware.org/ishelp/topic_setupexitcodes.htm).
+fn inno_exit(code: Option<i32>) -> Result<(), String> {
+    match code {
+        Some(0) => Ok(()),
+        Some(2) => Err("kurulum başlamadan iptal edildi (yönetici izni verilmemiş olabilir)".into()),
+        Some(5) => Err("kurulum yarıda kesildi: uygulama açık kalmış ya da dosyaları kullanımda olabilir; uygulamayı kapatıp tekrar deneyin".into()),
+        Some(c @ (1 | 3 | 4)) => Err(format!("kurulum hata verdi (çıkış kodu {c})")),
+        Some(6) => Err("kurulum dışarıdan sonlandırıldı".into()),
+        Some(7) => Err("kurulum ön hazırlığı tamamlanamadı".into()),
+        Some(8) => Err("kurulumdan önce Windows'un yeniden başlatılması gerekiyor".into()),
         code => Err(format!("kurulum başarısız (çıkış kodu {code:?})")),
     }
 }
@@ -585,4 +605,20 @@ fn run_windows_command(cmd: &str) -> Result<String, String> {
 #[cfg(not(windows))]
 fn run_windows_command(_cmd: &str) -> Result<String, String> {
     Err("yalnızca Windows'ta".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inno_exit;
+
+    #[test]
+    fn inno_exit_codes_are_told_apart() {
+        assert!(inno_exit(Some(0)).is_ok());
+        let before = inno_exit(Some(2)).unwrap_err();
+        let during = inno_exit(Some(5)).unwrap_err();
+        assert!(before.contains("başlamadan"), "{before}");
+        assert!(during.contains("yarıda"), "{during}");
+        assert!(inno_exit(Some(4)).unwrap_err().contains("4"));
+        assert!(inno_exit(None).is_err());
+    }
 }

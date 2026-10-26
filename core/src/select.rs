@@ -36,9 +36,52 @@ pub fn pick<'a>(pattern: &str, names: &[&'a str]) -> Option<&'a str> {
     hits.first().copied()
 }
 
+/// Etiketin sürüm kısmı: ("alpha-v0.1.5", Some("alpha-")) -> "v0.1.5".
+/// Önek yoksa ya da etiket önekle başlamıyorsa etiket olduğu gibi döner.
+pub fn strip_tag<'a>(tag: &'a str, prefix: Option<&str>) -> &'a str {
+    prefix.and_then(|p| tag.strip_prefix(p)).unwrap_or(tag)
+}
+
+/// Aynı depoyu paylaşan uygulamalardan birinin en yeni kararlı release'i: etiketi
+/// `prefix` + sürüm numarası olan, taslak ya da ön sürüm olmayanların en büyüğü.
+/// `tags`: (etiket, taslak ya da ön sürüm mü)
+pub fn pick_release<'a>(tags: &[(&'a str, bool)], prefix: &str) -> Option<&'a str> {
+    tags.iter()
+        .filter(|(_, unstable)| !unstable)
+        .filter_map(|(tag, _)| {
+            let v = crate::Version::parse(tag.strip_prefix(prefix)?)?;
+            // "-beta.1" gibi ekli etiketler de kararlı sayılmaz
+            v.is_stable().then_some((v, *tag))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, tag)| tag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_release_by_prefix() {
+        let tags = [
+            ("alpha-v0.1.5", false),
+            ("alpha-v0.1.10", false),
+            ("beta-v20260915", false),
+            ("alpha-v0.2.0-beta.1", true),
+            ("alpha-v0.3.0-rc.1", false),
+            ("alpha-notes", false),
+        ];
+        assert_eq!(pick_release(&tags, "alpha-"), Some("alpha-v0.1.10"));
+        assert_eq!(pick_release(&tags, "beta-"), Some("beta-v20260915"));
+        assert_eq!(pick_release(&tags, "al-"), None);
+    }
+
+    #[test]
+    fn strip_tag_cases() {
+        assert_eq!(strip_tag("alpha-v0.1.5", Some("alpha-")), "v0.1.5");
+        assert_eq!(strip_tag("v0.1.5", None), "v0.1.5");
+        assert_eq!(strip_tag("other-v1", Some("alpha-")), "other-v1");
+    }
 
     #[test]
     fn matches_wildcards() {

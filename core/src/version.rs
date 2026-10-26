@@ -30,6 +30,11 @@ impl Version {
     pub fn as_str(&self) -> &str {
         &self.raw
     }
+
+    /// Ön sürüm eki ("-beta.1") yok
+    pub fn is_stable(&self) -> bool {
+        self.pre.is_none()
+    }
 }
 
 impl fmt::Display for Version {

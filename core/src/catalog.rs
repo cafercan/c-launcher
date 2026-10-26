@@ -39,6 +39,10 @@ pub struct App {
     pub usage: Option<String>,
     /// Anahtarlar: "windows", "macos", "linux" ya da her sistem için "any"
     pub platforms: BTreeMap<String, PlatformSpec>,
+    /// Birden çok uygulama aynı depoda release yayımlıyorsa bu uygulamanın etiket öneki
+    /// ("alpha-" -> "alpha-v0.1.5")
+    #[serde(default)]
+    pub tag_prefix: Option<String>,
     /// Girişle okunan bir katalogdan geldi: release'leri de girişle okunur
     #[serde(skip)]
     pub private: bool,
@@ -153,6 +157,16 @@ impl Catalog {
             if !self.groups.iter().any(|g| g.id == app.group) {
                 return Err(format!("{}: bilinmeyen grup {}", app.id, app.group));
             }
+            if app.tag_prefix.as_deref().is_some_and(|p| !valid_prefix(p)) {
+                return Err(format!("{}: geçersiz etiket öneki (küçük harf, rakam, tire; sonu tire)", app.id));
+            }
+            let shared: Vec<&App> = self.apps.iter().filter(|a| a.repo == app.repo).collect();
+            if shared.len() > 1 {
+                let prefix = app.tag_prefix.as_deref().ok_or_else(|| format!("{}: {} deposunu paylaşan uygulamalar etiket öneki taşımalı", app.id, app.repo))?;
+                if shared.iter().filter(|a| a.tag_prefix.as_deref() == Some(prefix)).count() > 1 {
+                    return Err(format!("{}: {prefix} öneki aynı depoda iki kez kullanılmış", app.id));
+                }
+            }
             for (os, spec) in &app.platforms {
                 let where_ = format!("{} / {}", app.id, os);
                 let need = |field: &Option<String>, name: &str| {
@@ -238,6 +252,11 @@ pub fn merge(parts: Vec<(Catalog, Option<Group>, bool)>) -> Catalog {
         }
     }
     out
+}
+
+/// Etiket öneki: küçük harf, rakam ve tire, sonu tire ("alpha-").
+pub(crate) fn valid_prefix(p: &str) -> bool {
+    p.len() > 1 && p.ends_with('-') && p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// Uygulama kimliği klasör adı olarak da kullanılır: yalnızca küçük harf, rakam ve tire.
@@ -335,6 +354,22 @@ mod tests {
         let m = merge(vec![(a, None, false), (b, None, false)]);
         let ids: Vec<&str> = m.groups.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(ids, ["desktop", "chrome", "terminal"]);
+    }
+
+    #[test]
+    fn shared_repo_needs_distinct_prefixes() {
+        let two = |a: &str, b: &str| {
+            let app = |id: &str, prefix: &str| {
+                let p = if prefix.is_empty() { String::new() } else { format!(r#","tag_prefix":"{prefix}""#) };
+                format!(r#"{{"id":"{id}","repo":"example-org/releases","name":"{id}","group":"desktop","platforms":{{}}{p}}}"#)
+            };
+            Catalog::parse(&format!(r#"{{"schema":1,"groups":[{{"id":"desktop","title":"D"}}],"apps":[{},{}]}}"#, app("a", a), app("b", b)))
+        };
+        assert!(two("tool-", "").is_err());
+        assert!(two("tool-", "tool-").is_err());
+        assert!(two("Tool-", "other-").is_err());
+        assert!(two("tool", "other-").is_err());
+        assert!(two("tool-", "other-").is_ok());
     }
 
     #[test]

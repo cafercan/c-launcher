@@ -28,6 +28,10 @@ pub struct Release {
     pub assets: Vec<Asset>,
     #[serde(default)]
     pub zipball_url: Option<String>,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +42,12 @@ pub struct Asset {
     /// API adresi: girişle okunan depolarda dosya buradan indirilir
     #[serde(default)]
     pub url: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedList {
+    etag: Option<String>,
+    releases: Vec<Release>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -219,9 +229,103 @@ pub async fn latest_release(http: &reqwest::Client, repo: &str, cache_dir: &Path
     Ok(Some(release))
 }
 
+/// Önekli bir uygulamanın release'i, etiketi sürüm kısmına indirilmiş olarak: sonrası
+/// (sürüm karşılaştırma, kurulum) öneki bilmeden çalışır.
+pub fn pick_prefixed(list: &[Release], prefix: &str) -> Option<Release> {
+    let tags: Vec<(&str, bool)> = list.iter().map(|r| (r.tag_name.as_str(), r.draft || r.prerelease)).collect();
+    let tag = launcher_core::select::pick_release(&tags, prefix)?;
+    let mut r = list.iter().find(|r| r.tag_name == tag)?.clone();
+    r.tag_name = launcher_core::select::strip_tag(tag, Some(prefix)).to_string();
+    Some(r)
+}
+
+/// Launcher'ın kendi son sürümü; depo başka araçlarla paylaşılıyorsa önekli etiketlerden.
+pub async fn launcher_release(http: &reqwest::Client, cache_dir: &Path, token: Option<&str>) -> Result<Option<Release>, String> {
+    let repo = &BRAND.launcher_repo;
+    match BRAND.launcher_tag_prefix.as_deref() {
+        Some(p) => Ok(pick_prefixed(&releases(http, repo, cache_dir, token, &[p]).await?, p)),
+        None => latest_release(http, repo, cache_dir, token).await,
+    }
+}
+
+const PER_PAGE: usize = 100;
+const MAX_PAGES: u32 = 5;
+
+/// Bir sonraki sayfa okunmalı mı: her önek için bir release bulunana kadar, en çok 5 sayfa.
+fn need_more(found: &[Release], prefixes: &[&str], page: u32) -> bool {
+    page < MAX_PAGES && prefixes.iter().any(|p| pick_prefixed(found, p).is_none())
+}
+
+/// Birden çok uygulamanın paylaştığı deponun release listesi. Seyrek release çıkan bir araç
+/// diğerlerinin yüzlerce release'inin altında kalabilir: her önek bulunana kadar sayfalar
+/// okunur. İlk sayfa ETag ile önbelleğe alınır.
+pub async fn releases(http: &reqwest::Client, repo: &str, cache_dir: &Path, token: Option<&str>, prefixes: &[&str]) -> Result<Vec<Release>, String> {
+    let cache_file = cache_dir.join(format!("releases-{}.json", repo.replace('/', "__")));
+    let cached: Option<CachedList> = std::fs::read_to_string(&cache_file).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let mut all = Vec::new();
+    let mut page = 1;
+    loop {
+        let url = format!("https://api.github.com/repos/{repo}/releases?per_page={PER_PAGE}&page={page}");
+        let mut req = authed(http.get(&url), &url, token).header("Accept", "application/vnd.github+json");
+        let etag = cached.as_ref().filter(|_| page == 1).and_then(|c| c.etag.clone());
+        if let Some(e) = &etag {
+            req = req.header("If-None-Match", e);
+        }
+        let fallback = |e: String| match (&cached, page) {
+            (Some(c), 1) => Ok(c.releases.clone()),
+            (_, 1) => Err(e),
+            _ => Ok(Vec::new()), // sonraki sayfalar alınamadıysa eldekiyle devam
+        };
+        let batch = match req.send().await {
+            Err(e) => fallback(format!("GitHub'a ulaşılamadı: {e}"))?,
+            Ok(resp) => {
+                let status = resp.status();
+                note_status(status.as_u16(), token.is_some());
+                if let (reqwest::StatusCode::NOT_MODIFIED, 1, Some(c)) = (status, page, &cached) {
+                    c.releases.clone()
+                } else if !status.is_success() {
+                    fallback(format!("GitHub yanıtı: {status}"))?
+                } else {
+                    let new_etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(String::from);
+                    let list: Vec<Release> = resp.json().await.map_err(|e| format!("release listesi okunamadı: {e}"))?;
+                    if page == 1 {
+                        let _ = std::fs::write(&cache_file, serde_json::to_string(&CachedList { etag: new_etag, releases: list.clone() }).unwrap());
+                    }
+                    list
+                }
+            }
+        };
+        let full = batch.len() >= PER_PAGE;
+        all.extend(batch);
+        if !full || !need_more(&all, prefixes, page) {
+            return Ok(all);
+        }
+        page += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rel(tag: &str) -> Release {
+        serde_json::from_value(serde_json::json!({ "tag_name": tag })).unwrap()
+    }
+
+    #[test]
+    fn pages_until_every_prefix_found() {
+        let found = vec![rel("a-v1.0.0"), rel("a-v1.1.0")];
+        assert!(need_more(&found, &["a-", "b-"], 1));
+        assert!(!need_more(&found, &["a-"], 1));
+        assert!(!need_more(&found, &["a-", "b-"], MAX_PAGES));
+    }
+
+    #[test]
+    fn prefixed_release_gets_plain_tag() {
+        let list = vec![rel("a-v1.0.0"), rel("b-v2.0.0"), rel("a-v1.2.0")];
+        assert_eq!(pick_prefixed(&list, "a-").unwrap().tag_name, "v1.2.0");
+        assert!(pick_prefixed(&list, "c-").is_none());
+    }
 
     #[test]
     fn unauthorized_maps_to_login_required() {

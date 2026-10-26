@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{valid_repo, Group};
+use crate::catalog::{valid_prefix, valid_repo, Group};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brand {
@@ -13,6 +13,9 @@ pub struct Brand {
     pub data_dir: String,
     /// Launcher'ın kendi güncellemelerinin okunduğu depo
     pub launcher_repo: String,
+    /// Depo başka araçların release'lerini de taşıyorsa launcher'ın etiket öneki
+    #[serde(default)]
+    pub launcher_tag_prefix: Option<String>,
     /// Alt çubuktaki GITHUB bağlantısı
     pub home_url: String,
     /// Katalogların okunduğu depolar; listeler sırayla birleştirilir
@@ -75,6 +78,9 @@ impl Brand {
         if !valid_repo(&self.launcher_repo) {
             return Err(format!("brand.json: geçersiz launcher_repo {}", self.launcher_repo));
         }
+        if self.launcher_tag_prefix.as_deref().is_some_and(|p| !valid_prefix(p)) {
+            return Err("brand.json: geçersiz launcher_tag_prefix".into());
+        }
         if self.sources.is_empty() {
             return Err("brand.json: en az bir katalog kaynağı gerekli".into());
         }
@@ -109,6 +115,7 @@ mod tests {
         assert!(s.embedded && !s.private && s.group.is_none());
         assert!(b.login.is_none());
         assert!(!b.group_tabs);
+        assert!(b.launcher_tag_prefix.is_none());
     }
 
     fn with(edit: &str) -> Result<Brand, String> {
@@ -128,6 +135,8 @@ mod tests {
         assert!(with(r#"{"data_dir":"a/b"}"#).is_err());
         assert!(with(r#"{"data_dir":".."}"#).is_err());
         assert!(with(r#"{"launcher_repo":"nope"}"#).is_err());
+        assert!(with(r#"{"launcher_tag_prefix":"launcher"}"#).is_err());
+        assert!(with(r#"{"launcher_tag_prefix":"launcher-"}"#).is_ok());
         assert!(with(r#"{"login":{"client_id":""}}"#).is_err());
         let err = with(r#"{"sources":[{"repo":"example-org/tools","private":true}]}"#).unwrap_err();
         assert!(err.contains("özel katalog giriş gerektirir"), "{err}");

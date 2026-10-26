@@ -131,15 +131,34 @@ async fn fetch_once(state: &AppState) -> Loaded {
         }
     }
     let (catalog, sources) = github::catalog(&state.http, &cache, token.as_deref()).await;
-    let tasks = catalog.apps.iter().map(|a| {
-        let (http, cache, repo, id) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone());
-        // token yalnızca girişle okunan kaynakların depolarına gider
-        let t = token.clone().filter(|_| a.private);
+    // token yalnızca girişle okunan kaynakların depolarına gider
+    let token_for = |private: bool| token.clone().filter(|_| private);
+    let plain = catalog.apps.iter().filter(|a| a.tag_prefix.is_none()).map(|a| {
+        let (http, cache, repo, id, t) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone(), token_for(a.private));
         async move { (id, github::latest_release(&http, &repo, &cache, t.as_deref()).await) }
     });
-    let (releases, launcher) =
-        tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, &github::BRAND.launcher_repo, &cache, token.as_deref()));
-    Loaded { catalog, releases: releases.into_iter().collect(), launcher_latest: launcher.ok().flatten(), sources, checked_at: now() }
+    // aynı depoyu paylaşan önekli uygulamalar için depo başına tek liste
+    let mut by_repo: std::collections::BTreeMap<&str, Vec<&App>> = Default::default();
+    for a in catalog.apps.iter().filter(|a| a.tag_prefix.is_some()) {
+        by_repo.entry(&a.repo).or_default().push(a);
+    }
+    let shared = by_repo.into_iter().map(|(repo, apps)| {
+        let (http, cache, repo) = (state.http.clone(), cache.clone(), repo.to_string());
+        let t = token_for(apps.iter().any(|a| a.private));
+        let wanted: Vec<(String, String)> = apps.iter().map(|a| (a.id.clone(), a.tag_prefix.clone().unwrap_or_default())).collect();
+        async move {
+            let prefixes: Vec<&str> = wanted.iter().map(|(_, p)| p.as_str()).collect();
+            let list = github::releases(&http, &repo, &cache, t.as_deref(), &prefixes).await;
+            wanted.iter().map(|(id, p)| (id.clone(), list.as_ref().map(|l| github::pick_prefixed(l, p)).map_err(Clone::clone))).collect::<Vec<_>>()
+        }
+    });
+    let (plain, shared, launcher) = tokio::join!(
+        futures_util::future::join_all(plain),
+        futures_util::future::join_all(shared),
+        github::launcher_release(&state.http, &cache, token.as_deref())
+    );
+    let releases = plain.into_iter().chain(shared.into_iter().flatten()).collect();
+    Loaded { catalog, releases, launcher_latest: launcher.ok().flatten(), sources, checked_at: now() }
 }
 
 fn view(app: &App, loaded: &Loaded, state: &AppState) -> AppView {
@@ -434,7 +453,7 @@ fn cli_self_update() -> i32 {
         let store = Store::open();
         let http = github::client();
         let token = github::BRAND.login.as_ref().and_then(|_| token::load());
-        let release = match github::latest_release(&http, &github::BRAND.launcher_repo, &store.dir("cache"), token.as_deref()).await {
+        let release = match github::launcher_release(&http, &store.dir("cache"), token.as_deref()).await {
             Ok(Some(r)) => r,
             Ok(None) => {
                 eprintln!("henüz release yok");

@@ -54,6 +54,13 @@ bu dosyayı GitHub'dan okur. Yeni bir uygulama eklemek için launcher'ın yeni s
 Katalog biçimi ve uygulamaların launcher'la uyumlu release'i için kurallar:
 [docs/catalog.md](docs/catalog.md).
 
+## Kendi derlemeniz
+
+Aynı koddan farklı ad ve kataloglarla ayrı bir launcher derlenebilir (ör. bir ekibin kendi
+araçları için): birden çok katalog kaynağı, isteğe bağlı GitHub girişiyle özel depolardan kurulum,
+kurulumsuz Windows uygulamaları (`exe`, `zip`), tek depoda birden çok uygulama ve grup sekmeleri.
+Ayrıntılar: [docs/catalog.md](docs/catalog.md#kendi-derlemeniz-brandjson).
+
 ## Geliştirme
 
 [Tauri 2](https://tauri.app) ile yazıldı: arayüz `ui/` altında düz HTML/CSS/JS (derleme adımı yok),

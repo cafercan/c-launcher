@@ -143,6 +143,12 @@ dialog li b { color: var(--text); }
 .dlgfoot button.primary { background: var(--inv-bg); color: var(--inv-text); }
 .dlgfoot.left { justify-content: flex-start; margin-bottom: 10px; }
 
+/* grup sekmeleri */
+.tabs { display: flex; gap: 0; padding: 0 20px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 11px 14px 9px; font-size: 11px; font-weight: 700; cursor: pointer; color: var(--muted); white-space: nowrap; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--text); }
+.tabs .n { opacity: .65; margin-left: 6px; font-weight: 400; }
+
 /* giriş */
 .login-panel { border: 1px solid var(--line); padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--muted); }
 .usercode { font: 700 30px var(--mono); letter-spacing: .18em; text-align: center; padding: 16px; border: 1px solid var(--line); margin: 14px 0; }

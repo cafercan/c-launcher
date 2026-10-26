@@ -27,6 +27,7 @@ let data = null;
 let view = localStorage.getItem('view') || 'grid';
 let filter = 'all';
 let query = '';
+let tab = localStorage.getItem('group') || 'all';
 const jobs = {};      // id -> {phase, done, total}
 const errors = {};    // id -> son hata
 
@@ -144,15 +145,18 @@ function render() {
   $('#updateAll').disabled = !pending;
   document.querySelectorAll('.views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
 
+  renderTabs();
+  const inTab = id => !data.group_tabs || tab === 'all' || tab === id;
   let n = 0, html = '';
   // girişle okunan kaynaklar: giriş yapılana kadar kart yerine giriş paneli
-  data.sources.filter(s => s.from === 'login').forEach(s => {
+  data.sources.filter(s => s.from === 'login' && inTab(loginTabId(s))).forEach(s => {
     html += `<div class="section-head"><span>${esc(s.group ? s.group.title : 'Giriş gerektiren uygulamalar')}</span></div>
       <div class="login-panel"><span>Bu bölüm için GitHub hesabınızla giriş yapın.</span><button class="btn" data-act="login">GITHUB İLE GİRİŞ YAP</button></div>`;
   });
   data.groups.forEach((g, gi) => {
     const list = apps.filter(a => a.group === g.id);
     const shown = list.filter(visible);
+    if (!inTab(g.id)) { n += list.length; return; }
     if (!shown.length) { n += list.length; return; }
     html += `<div class="section-head"><span>${String(gi + 1).padStart(2, '0')} / ${esc(g.title)}</span><span>${list.length} UYGULAMA</span></div>`;
     if (view === 'grid') {
@@ -170,6 +174,21 @@ function render() {
   renderBrand();
   renderUser();
   renderBanner();
+}
+
+const loginTabId = s => s.group ? s.group.id : 'login';
+
+// brand.json'da group_tabs açıksa gruplar sekme olur; seçim hatırlanır
+function renderTabs() {
+  const nav = $('#tabs');
+  nav.hidden = !data.group_tabs;
+  if (!data.group_tabs) return;
+  const tabs = [['all', 'TÜMÜ', data.apps.length]];
+  data.sources.filter(s => s.from === 'login').forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : 'Giriş gerektiren uygulamalar', null]));
+  data.groups.forEach(g => tabs.push([g.id, g.title, data.apps.filter(a => a.group === g.id).length]));
+  if (!tabs.some(t => t[0] === tab)) tab = 'all';
+  nav.innerHTML = tabs.map(([id, title, count]) =>
+    `<button data-tab="${esc(id)}" class="${tab === id ? 'on' : ''}">${esc(title.toLocaleUpperCase('tr'))}${count === null ? '' : `<span class="n">${count}</span>`}</button>`).join('');
 }
 
 function renderUser() {
@@ -328,6 +347,8 @@ document.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#selfUpdate')) { updateLauncher(); return; }
+  const t = e.target.closest('[data-tab]');
+  if (t) { tab = t.dataset.tab; try { localStorage.setItem('group', tab); } catch {} render(); return; }
   const f = e.target.closest('[data-filter]');
   if (f) { filter = f.dataset.filter; render(); }
   const v = e.target.closest('[data-view]');
@@ -428,7 +449,7 @@ function mock(cmd, args) {
   const base = {
     groups: [{ id: 'desktop', title: 'Masaüstü uygulamaları' }, { id: 'terminal', title: 'Terminal araçları' }, { id: 'chrome', title: 'Chrome eklentileri' }],
     os: 'linux', sources: [{ repo: 'cafercan/c-launcher', group: null, from: 'github', error: null }], checked_at: now - 180, launcher_version: '0.1.0', launcher_latest: null, launcher_url: '',
-    brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: false, login_enabled: false, user: null,
+    brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: new URLSearchParams(location.search).has('tabs'), login_enabled: false, user: null,
     apps: [
       { id: 'kitaplik', name: 'Kitaplık', repo: 'cafercan/kitaplik', group: 'desktop', description: 'E-kitap kitaplığı: etiket, filtre, kalite puanı', accent: '#2f6f5e', icon: 'https://raw.githubusercontent.com/cafercan/kitaplik/main/kitaplik.svg', method: 'deb', status: 'update_available', installed: '0.1.0', installed_known: true, latest: '0.2.0', published_at: '2026-10-25T10:00:00Z', size: 31000, needs_reload: false },
       { id: 'mdviewer', name: 'MD Flow Viewer', repo: 'cafercan/MDViewer', group: 'desktop', description: 'Markdown görüntüleyici ve düzenleyici: canlı yenileme, Mermaid', accent: '#3b6fd4', icon: 'https://raw.githubusercontent.com/cafercan/MDViewer/main/public/favicon-192.png', method: 'deb', status: 'not_installed', installed: null, installed_known: false, latest: '2.9.0', published_at: '2026-10-12T10:00:00Z', size: 48200000, needs_reload: false },

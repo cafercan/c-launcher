@@ -40,8 +40,27 @@ Bir sistem için `platforms` içinde kayıt yoksa kart o sistemde soluk görün�
 | `deb` | Linux | `asset`, `package`, `run` | `pkexec apt-get install` ile kurulur (sistem parola penceresi açılır). Sürüm `dpkg`'den okunur |
 | `script` | hepsi | `install`, isteğe bağlı `uninstall`, `detect_path` / `detect_paths` | Release'in kaynak arşivi indirilir, depodaki betik çalıştırılır (`.ps1` PowerShell ile, diğerleri bash ile) |
 | `chrome` | hepsi (`any`) | `asset` | Eklenti zip'i launcher'ın veri klasörüne açılır; kullanıcı Chrome'a bir kez "Paketlenmemiş öğe yükle" ile ekler. Güncellemeler aynı klasöre yazılır |
+| `exe` | Windows | `asset`, isteğe bağlı `app` (diskteki dosya adı, varsayılan `<id>.exe`) | Kurulumsuz tek `.exe`, `%LOCALAPPDATA%\Programs\c-launcher\<id>` (ya da seçilen kurulum klasörü) altına konur. Başlat menüsüne kısayol eklenir |
+| `zip` | Windows | `asset`, `run` | Kurulumsuz uygulama klasörü. Zip'in kökünde **tek bir klasör** olmalı (adında sürüm olabilir); launcher bu klasörü atarak açar. `run`, o klasörün içinde çalıştırılacak `.exe`'nin yolu. Başlat menüsüne kısayol eklenir |
 
 `asset`, release'teki dosya adı için `*` içerebilen bir kalıptır: `kitaplik-*-windows-x64-setup.exe`.
+
+`exe` ve `zip` yöntemlerinde `SHA256SUMS.txt` zorunludur; yoksa dosya kurulmaz. Güncellemede yeni
+dosya ya da klasör önce yanına hazırlanır, sonra eskisinin yerine konur; uygulama açıksa eskisi
+yerinde kalır ve "uygulama açık" uyarısı çıkar. Uygulama ayarlarını kendi klasörüne değil
+`%APPDATA%` altına yazmalı: güncellemede klasör tümüyle yenilenir.
+
+```json
+"windows": { "method": "zip", "asset": "gridcraft-*-windows-x64-portable.zip", "run": "gridcraft.exe" }
+```
+
+## Bir depoda birden çok uygulama
+
+Birden çok uygulama release'lerini aynı depoda yayımlıyorsa her biri bir **etiket öneki** taşır:
+`"tag_prefix": "alpha-"` ile launcher yalnızca `alpha-v0.1.5` gibi etiketlere bakar ve
+sürümü önekten sonraki kısımdan okur. Önek küçük harf, rakam ve tireden oluşur, tireyle biter.
+Aynı depoyu paylaşan uygulamaların hepsinin farklı bir öneki olmalı. Seyrek release çıkan bir
+uygulama diğerlerinin release'leri altında kalsa da bulunur (en çok 500 release geriye bakılır).
 
 `script` yönteminde araç elle kurulmuş olsa da "kurulu" görünsün diye kurulumun bıraktığı bir
 dosya ya da klasör verilir. `detect_path` tek yol, `detect_paths` yol listesidir; biri varsa araç
@@ -79,6 +98,48 @@ kurulmuş uygulamalar güncellemede bulundukları yerde kalır:
   eşleşmesi için uygulamanın pencere sınıfıdır. Taşınabilir paketi olmayan uygulamalar Linux'ta
   her zaman `.deb` olarak kurulur.
 - **Terminal araçları:** yeri kurulum betiği belirler.
+
+## Kendi derlemeniz (brand.json)
+
+Launcher'ın adı, veri klasörü, katalogları ve güncelleme deposu derlemeye gömülen
+[`src-tauri/brand.json`](../src-tauri/brand.json) dosyasından gelir. Kodu çatallamadan başka
+adla ayrı bir launcher derlemek için bu dosyayı, simgeleri ve bir Tauri ayar katmanını
+değiştirmek yeterli:
+
+```jsonc
+{
+  "name": "Örnek Launcher",
+  "data_dir": "ornek-launcher",                  // %LOCALAPPDATA% altındaki klasör
+  "launcher_repo": "example-org/releases",       // launcher'ın kendi güncellemeleri
+  "launcher_tag_prefix": "launcher-",            // depo araçlarla paylaşılıyorsa
+  "home_url": "https://github.com/example-org",
+  "login": { "client_id": "Iv1.0123456789abcdef" },  // isteğe bağlı GitHub girişi
+  "group_tabs": true,                            // gruplar sekme olarak görünür
+  "sources": [
+    { "repo": "example-org/releases", "private": true },
+    { "repo": "cafercan/c-launcher", "embedded": true,
+      "group": { "id": "public", "title": "Herkese açık uygulamalar" } }
+  ]
+}
+```
+
+- **`sources`:** kataloglar sırayla okunup birleştirilir; aynı kimlik iki kaynakta varsa öndeki
+  kazanır. `group` verilen bir kaynağın bütün uygulamaları o grupta görünür. Her kaynağın
+  ayrı önbelleği vardır; çevrimdışıyken her biri kendi son kopyasına düşer. `embedded` yalnızca
+  launcher'a gömülü `catalog.json`'ın aynısı olan kaynak içindir.
+- **`private` ve `login`:** özel bir kaynak giriş yapılana kadar okunmaz; yerinde bir giriş paneli
+  görünür, diğer kaynaklar girişsiz çalışır. Giriş, GitHub'ın cihaz koduyla giriş akışını kullanır:
+  bir **GitHub App** oluşturun (OAuth App değil), "Enable Device Flow"u açın, izin olarak yalnızca
+  *Contents: read* ve *Metadata: read* verin ve uygulamayı yalnızca katalog ve release depolarına
+  kurun. Token Windows Kimlik Bilgileri Yöneticisi'nde / macOS Anahtar Zinciri'nde tutulur ve
+  yalnızca `api.github.com`'a gönderilir; süresi dolunca ya da geri alınınca launcher yeniden giriş
+  ister. GitHub App'lerin kullanıcı token'ları varsayılan olarak 8 saatte dolar ve launcher yenileme
+  token'ı kullanmaz: kullanıcıların her gün yeniden giriş yapmaması için uygulamanın ayarlarında
+  "User-to-server token expiration"ı kapatın.
+- **Derleme:** `src-tauri/brand.json` ve `src-tauri/icons/` değiştirilip
+  `npx @tauri-apps/cli@2 build --config overlay.json` çalıştırılır; `overlay.json` en az
+  `productName` ve `identifier` (ör. `com.example.launcher`) içermeli ki iki launcher yan yana
+  kurulabilsin.
 
 ## Uyumlu release için kurallar
 

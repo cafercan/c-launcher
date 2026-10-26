@@ -116,7 +116,8 @@ değiştirmek yeterli:
   "login": { "client_id": "Iv1.0123456789abcdef" },  // isteğe bağlı GitHub girişi
   "group_tabs": true,                            // gruplar sekme olarak görünür
   "sources": [
-    { "repo": "example-org/releases", "private": true },
+    { "repo": "example-org/releases", "private": true,
+      "mirror": "http://192.0.2.10/releases" },          // isteğe bağlı yerel ayna
     { "repo": "cafercan/c-launcher", "embedded": true,
       "group": { "id": "public", "title": "Herkese açık uygulamalar" } }
   ]
@@ -136,6 +137,12 @@ değiştirmek yeterli:
   ister. GitHub App'lerin kullanıcı token'ları varsayılan olarak 8 saatte dolar ve launcher yenileme
   token'ı kullanmaz: kullanıcıların her gün yeniden giriş yapmaması için uygulamanın ayarlarında
   "User-to-server token expiration"ı kapatın.
+- **`mirror`:** yerel ağdaki bir web sunucusu. Launcher açılışta bu adresi en çok 2 saniye
+  dener; ulaşırsa kataloğu (`<mirror>/catalog.json`) ve release listesini (`<mirror>/releases.json`,
+  GitHub'ın `/releases` yanıtıyla aynı biçimde, indirme adresleri aynayı gösterir) girişsiz oradan
+  okur. Ulaşamazsa kaynak her zamanki gibi GitHub'dan (özelse girişle) okunur. Dosyalar aynada da
+  `SHA256SUMS.txt` ile doğrulanır. Aynanın içeriğini GitHub'dan düzenli olarak indirmek kurulumun
+  işidir; launcher yalnızca okur.
 - **Derleme:** `src-tauri/brand.json` ve `src-tauri/icons/` değiştirilip
   `npx @tauri-apps/cli@2 build --config overlay.json` çalıştırılır; `overlay.json` en az
   `productName` ve `identifier` (ör. `com.example.launcher`) içermeli ki iki launcher yan yana

@@ -20,6 +20,8 @@ const STATUS = {
 const OS_NAME = { windows: 'WINDOWS', macos: 'MACOS', linux: 'LINUX' };
 const PHASE = { download: 'İndiriliyor', verify: 'Doğrulanıyor', install: 'Kuruluyor' };
 const SOURCE = { github: 'GITHUB', cache: 'ÖNBELLEK (ÇEVRİMDIŞI)', embedded: 'GÖMÜLÜ LİSTE', none: 'LİSTE ALINAMADI' };
+const LOCK = '<svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="1"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const WARN = '<svg class="ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>';
 // alt çubukta en kötü durumdaki kaynak görünür; giriş bekleyen kaynak hata sayılmaz
 const worstSource = () => ['none', 'embedded', 'cache'].find(f => data.sources.some(s => s.from === f)) || 'github';
 
@@ -149,14 +151,16 @@ function render() {
   const inTab = id => !data.group_tabs || tab === 'all' || tab === id;
   let n = 0, html = '';
   // girişle okunan kaynaklar: giriş yapılana kadar kart yerine giriş paneli
+  // giriş öne çıkarılmaz: tek satırlık bir not; ayna tanımlıysa ofis ağında zaten görünür
   data.sources.filter(s => s.from === 'login' && inTab(loginTabId(s))).forEach(s => {
+    const why = s.has_mirror ? 'Bu bölüm ofis ağında kendiliğinden açılır. Ofis dışındaysanız' : 'Bu bölümü görmek için';
     html += `<div class="section-head"><span>${esc(s.group ? s.group.title : 'Giriş gerektiren uygulamalar')}</span></div>
-      <div class="login-panel"><span>Bu bölüm için GitHub hesabınızla giriş yapın.</span><button class="btn" data-act="login">GITHUB İLE GİRİŞ YAP</button></div>`;
+      <div class="notice">${LOCK}<span>${why} <a href="#" data-act="login">GitHub ile giriş yapın</a>.</span></div>`;
   });
   // listesi hiç alınamayan (çevrimdışı ve önbelleksiz) kaynaklar sessizce kaybolmasın
   failedSources().filter(s => inTab(loginTabId(s))).forEach(s => {
     html += `<div class="section-head"><span>${esc(s.group ? s.group.title : s.repo)}</span></div>
-      <div class="login-panel"><span>Bu bölümün listesi alınamadı (çevrimdışı olabilirsiniz). Yenile'ye basarak tekrar deneyin.</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</div>`;
+      <div class="notice warn">${WARN}<span>Bu bölümün listesi alınamadı; çevrimdışı olabilirsiniz. Yenile'ye basarak tekrar deneyin.${s.error ? ` <span class="why">${esc(s.error)}</span>` : ''}</span></div>`;
   });
   data.groups.forEach((g, gi) => {
     const list = apps.filter(a => a.group === g.id);
@@ -174,7 +178,8 @@ function render() {
   });
   $('#content').innerHTML = html || '<p class="empty">Eşleşen uygulama yok</p>';
 
-  $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${SOURCE[worstSource()]}`;
+  const local = data.sources.some(s => s.from === 'mirror') ? 'YEREL SUNUCU · ' : '';
+  $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${local}${SOURCE[worstSource()]}`;
   $('#target').textContent = `${data.brand_name.toLocaleUpperCase('tr')} ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
   renderBrand();
   renderUser();
@@ -189,13 +194,21 @@ function renderTabs() {
   const nav = $('#tabs');
   nav.hidden = !data.group_tabs;
   if (!data.group_tabs) return;
-  const tabs = [['all', 'TÜMÜ', data.apps.length]];
-  data.sources.filter(s => s.from === 'login').forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : 'Giriş gerektiren uygulamalar', null]));
-  failedSources().forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : s.repo, null]));
-  data.groups.forEach(g => tabs.push([g.id, g.title, data.apps.filter(a => a.group === g.id).length]));
+  // [kimlik, başlık, uygulama sayısı (yoksa simge), güncelleme sayısı]
+  const updates = list => list.filter(a => a.status === 'update_available').length;
+  const tabs = [['all', 'TÜMÜ', data.apps.length, updates(data.apps)]];
+  data.sources.filter(s => s.from === 'login').forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : 'Giriş gerektiren uygulamalar', LOCK, 0]));
+  failedSources().forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : s.repo, WARN, 0]));
+  data.groups.forEach(g => {
+    const list = data.apps.filter(a => a.group === g.id);
+    tabs.push([g.id, g.title, list.length, updates(list)]);
+  });
   if (!tabs.some(t => t[0] === tab)) tab = 'all';
-  nav.innerHTML = tabs.map(([id, title, count]) =>
-    `<button data-tab="${esc(id)}" class="${tab === id ? 'on' : ''}">${esc(title.toLocaleUpperCase('tr'))}${count === null ? '' : `<span class="n">${count}</span>`}</button>`).join('');
+  nav.innerHTML = tabs.map(([id, title, count, up]) => {
+    const n = typeof count === 'number' ? `<span class="n">${count}</span>` : count;
+    const dot = up ? `<span class="up" title="${up} güncelleme">${up}</span>` : '';
+    return `<button data-tab="${esc(id)}" class="${tab === id ? 'on' : ''}">${esc(title.toLocaleUpperCase('tr'))}${n}${dot}</button>`;
+  }).join('');
 }
 
 function renderUser() {
@@ -467,8 +480,9 @@ function mock(cmd, args) {
   };
   // ?login=1: girişle okunan bir kaynak; ?offline=1: listesi alınamayan bir kaynak
   const q = new URLSearchParams(location.search);
-  if (q.has('login')) base.sources.unshift({ repo: 'example-org/tools', group: { id: 'tools', title: 'Şirket araçları' }, from: 'login', error: null });
-  if (q.has('offline')) base.sources.push({ repo: 'example-org/catalog', group: { id: 'more', title: 'Önerilen uygulamalar' }, from: 'none', error: 'GitHub\'a ulaşılamadı' });
+  if (q.has('login')) base.sources.unshift({ repo: 'example-org/tools', group: { id: 'tools', title: 'Şirket araçları' }, from: 'login', error: null, has_mirror: true });
+  if (q.has('offline')) base.sources.push({ repo: 'example-org/catalog', group: { id: 'more', title: 'Önerilen uygulamalar' }, from: 'none', error: 'GitHub\'a ulaşılamadı', has_mirror: false });
+  if (q.has('mirror')) base.sources[base.sources.length - 1].from = 'mirror';
   mock.state = mock.state || base;
   if (cmd === 'overview' || cmd === 'refresh') return Promise.resolve(JSON.parse(JSON.stringify(mock.state)));
   if (cmd === 'install') {

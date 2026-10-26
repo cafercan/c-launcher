@@ -148,9 +148,17 @@ dialog li b { color: var(--text); }
 .tabs button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 11px 14px 9px; font-size: 11px; font-weight: 700; cursor: pointer; color: var(--muted); white-space: nowrap; }
 .tabs button.on { color: var(--text); border-bottom-color: var(--text); }
 .tabs .n { opacity: .65; margin-left: 6px; font-weight: 400; }
+.tabs .ico { margin-left: 6px; vertical-align: -2px; opacity: .7; }
+.tabs .up { display: inline-block; min-width: 16px; margin-left: 6px; padding: 1px 4px; border-radius: 8px; background: var(--amber); color: var(--bg); font-size: 10px; text-align: center; }
+
+/* bölüm notları: giriş daveti ve alınamayan listeler, kartların yerine tek satır */
+.notice { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--line); border-left: 3px solid var(--blue); color: var(--muted); font-size: 13px; }
+.notice a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.notice.warn { border-left-color: var(--amber); }
+.notice .why { font: 11px var(--mono); opacity: .8; }
+.notice .ico { flex: none; }
 
 /* giriş */
-.login-panel { border: 1px solid var(--line); padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--muted); }
 .usercode { font: 700 30px var(--mono); letter-spacing: .18em; text-align: center; padding: 16px; border: 1px solid var(--line); margin: 14px 0; }
 #user a { margin-left: 6px; }
 

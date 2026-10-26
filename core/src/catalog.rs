@@ -219,7 +219,7 @@ mod tests {
         let kedy = c.apps.iter().find(|a| a.id == "kedy").unwrap();
         assert_eq!(kedy.spec_for(Os::Windows).unwrap().method, Method::Chrome);
         let md = c.apps.iter().find(|a| a.id == "mdviewer").unwrap();
-        assert!(md.spec_for(Os::Macos).is_none(), "MDViewer'ın Mac sürümü yok");
+        assert_eq!(md.spec_for(Os::Macos).unwrap().method, Method::Dmg);
     }
 
     #[test]

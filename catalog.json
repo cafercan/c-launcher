@@ -49,6 +49,7 @@
           "asset": "MDViewer-*.exe",
           "inno_app_id": "{9E7231B5-C614-4AAA-B5EA-B73031BECD16}"
         },
+        "macos": { "method": "dmg", "asset": "MDViewer-*-macos-arm64.dmg", "app": "MD Flow Viewer.app" },
         "linux": { "method": "deb", "asset": "mdflowviewer_*_all.deb", "package": "mdflowviewer", "run": "mdflowviewer" }
       }
     },

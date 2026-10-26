@@ -4,9 +4,11 @@
 mod detect;
 mod github;
 mod install;
+mod login;
 mod opener;
 mod selfupdate;
 mod store;
+mod token;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +34,23 @@ struct AppState {
     http: reqwest::Client,
     loaded: tokio::sync::Mutex<Option<Loaded>>,
     jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// GitHub girişinin token'ı (brand.json'da giriş tanımlıysa)
+    token: Mutex<Option<String>>,
+    user: Mutex<Option<String>>,
+    pending_login: tokio::sync::Mutex<Option<login::Pending>>,
+}
+
+impl AppState {
+    fn token(&self) -> Option<String> {
+        self.token.lock().unwrap().clone()
+    }
+
+    /// Giriş geçersiz: token silinir, özel kaynaklar giriş paneline döner.
+    fn forget_login(&self) {
+        token::clear();
+        *self.token.lock().unwrap() = None;
+        *self.user.lock().unwrap() = None;
+    }
 }
 
 #[derive(Serialize)]
@@ -71,6 +90,8 @@ struct Overview {
     brand_name: &'static str,
     home_url: &'static str,
     group_tabs: bool,
+    login_enabled: bool,
+    user: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -90,13 +111,34 @@ fn version_of(release: &Release) -> Option<Version> {
 }
 
 async fn fetch(state: &AppState) -> Loaded {
+    let loaded = fetch_once(state).await;
+    if github::take_unauthorized() {
+        // token reddedildi: girişsiz yeniden yükle, özel bölümler giriş paneline döner
+        state.forget_login();
+        return fetch_once(state).await;
+    }
+    loaded
+}
+
+async fn fetch_once(state: &AppState) -> Loaded {
     let cache = state.store.dir("cache");
-    let (catalog, sources) = github::catalog(&state.http, &cache, None).await;
+    let token = state.token();
+    if let Some(t) = &token {
+        if state.user.lock().unwrap().is_none() {
+            if let Ok(name) = github::user(&state.http, t).await {
+                *state.user.lock().unwrap() = Some(name);
+            }
+        }
+    }
+    let (catalog, sources) = github::catalog(&state.http, &cache, token.as_deref()).await;
     let tasks = catalog.apps.iter().map(|a| {
         let (http, cache, repo, id) = (state.http.clone(), cache.clone(), a.repo.clone(), a.id.clone());
-        async move { (id, github::latest_release(&http, &repo, &cache).await) }
+        // token yalnızca girişle okunan kaynakların depolarına gider
+        let t = token.clone().filter(|_| a.private);
+        async move { (id, github::latest_release(&http, &repo, &cache, t.as_deref()).await) }
     });
-    let (releases, launcher) = tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, &github::BRAND.launcher_repo, &cache));
+    let (releases, launcher) =
+        tokio::join!(futures_util::future::join_all(tasks), github::latest_release(&state.http, &github::BRAND.launcher_repo, &cache, token.as_deref()));
     Loaded { catalog, releases: releases.into_iter().collect(), launcher_latest: launcher.ok().flatten(), sources, checked_at: now() }
 }
 
@@ -171,6 +213,8 @@ fn overview_of(loaded: &Loaded, state: &AppState) -> Overview {
         brand_name: &github::BRAND.name,
         home_url: &github::BRAND.home_url,
         group_tabs: github::BRAND.group_tabs,
+        login_enabled: github::BRAND.login.is_some(),
+        user: state.user.lock().unwrap().clone(),
     }
 }
 
@@ -220,7 +264,8 @@ async fn install(handle: AppHandle, state: State<'_, AppState>, id: String) -> R
     let progress = move |phase: &str, done: u64, total: u64| {
         let _ = h.emit("job", JobEvent { id: emit_id.clone(), phase: phase.into(), done, total });
     };
-    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress };
+    let token = state.token().filter(|_| app.private);
+    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress, token };
     let result = install::install(&app, &spec, &release, &ctx).await;
     state.jobs.lock().unwrap().remove(&id);
     let _ = handle.emit("job", JobEvent { id, phase: "done".into(), done: 0, total: 0 });
@@ -335,7 +380,7 @@ async fn update_launcher(handle: AppHandle, state: State<'_, AppState>) -> Resul
     let progress = move |phase: &str, done: u64, total: u64| {
         let _ = h.emit("job", JobEvent { id: ID.into(), phase: phase.into(), done, total });
     };
-    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress };
+    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress, token: state.token() };
     let result = selfupdate::run(&release, &ctx, true).await;
     state.jobs.lock().unwrap().remove(ID);
     let _ = handle.emit("job", JobEvent { id: ID.into(), phase: "done".into(), done: 0, total: 0 });
@@ -343,6 +388,33 @@ async fn update_launcher(handle: AppHandle, state: State<'_, AppState>) -> Resul
     // yeni sürüm başlatıldı (Windows'ta kurulum bitince açılacak): bu kopya kapanır
     handle.exit(0);
     Ok(())
+}
+
+/// Giriş kodunu alır; kullanıcı kodu github.com/login/device sayfasında girer.
+#[tauri::command]
+async fn login_start(state: State<'_, AppState>) -> Result<login::DeviceCode, String> {
+    let client_id = &github::BRAND.login.as_ref().ok_or("bu derlemede giriş yok")?.client_id;
+    let (code, pending) = login::start(&state.http, client_id).await?;
+    *state.pending_login.lock().await = Some(pending);
+    Ok(code)
+}
+
+/// Kullanıcının onayını bekler; token'ı saklar ve GitHub kullanıcı adını döner.
+#[tauri::command]
+async fn login_wait(state: State<'_, AppState>) -> Result<String, String> {
+    let client_id = &github::BRAND.login.as_ref().ok_or("bu derlemede giriş yok")?.client_id;
+    let pending = state.pending_login.lock().await.take().ok_or("önce giriş kodu alın")?;
+    let token = login::wait(&state.http, client_id, pending).await?;
+    let name = github::user(&state.http, &token).await?;
+    token::save(&token)?;
+    *state.token.lock().unwrap() = Some(token);
+    *state.user.lock().unwrap() = Some(name.clone());
+    Ok(name)
+}
+
+#[tauri::command]
+fn logout(state: State<'_, AppState>) {
+    state.forget_login();
 }
 
 #[tauri::command]
@@ -361,7 +433,8 @@ fn cli_self_update() -> i32 {
     runtime.block_on(async {
         let store = Store::open();
         let http = github::client();
-        let release = match github::latest_release(&http, &github::BRAND.launcher_repo, &store.dir("cache")).await {
+        let token = github::BRAND.login.as_ref().and_then(|_| token::load());
+        let release = match github::latest_release(&http, &github::BRAND.launcher_repo, &store.dir("cache"), token.as_deref()).await {
             Ok(Some(r)) => r,
             Ok(None) => {
                 eprintln!("henüz release yok");
@@ -378,7 +451,7 @@ fn cli_self_update() -> i32 {
             return 0;
         }
         let progress = |_: &str, _: u64, _: u64| {};
-        let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress };
+        let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress, token };
         match selfupdate::run(&release, &ctx, false).await {
             Ok(()) => {
                 println!("{} {current} → {} güncellendi", github::BRAND.name, release.tag_name);
@@ -406,6 +479,9 @@ fn main() {
             http: github::client(),
             loaded: tokio::sync::Mutex::new(None),
             jobs: Mutex::new(HashMap::new()),
+            token: Mutex::new(github::BRAND.login.as_ref().and_then(|_| token::load())),
+            user: Mutex::new(None),
+            pending_login: tokio::sync::Mutex::new(None),
         })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -419,7 +495,10 @@ fn main() {
             set_install_root,
             update_launcher,
             open_url,
-            open_chrome_extensions
+            open_chrome_extensions,
+            login_start,
+            login_wait,
+            logout
         ])
         .run(tauri::generate_context!())
         .expect("launcher başlatılamadı");

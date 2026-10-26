@@ -62,9 +62,12 @@ pub async fn run(release: &Release, ctx: &Ctx<'_>, relaunch: bool) -> Result<(),
     let name = select::pick(pat, &names).ok_or_else(|| format!("release'te {pat} kalıbına uyan dosya yok"))?;
     let asset = release.assets.iter().find(|a| a.name == name).unwrap();
     let file = ctx.store.dir("downloads").join(&asset.name);
-    let digest = install::download(ctx, &asset.browser_download_url, &file, asset.size).await?;
+    // launcher deposu girişle okunuyorsa dosyalar da API'den, token'la indirilir
+    let private = ctx.token.is_some();
+    let url = launcher_core::auth::asset_url(&asset.url, &asset.browser_download_url, private);
+    let digest = install::download(ctx, url, &file, asset.size).await?;
     // launcher'ın kendisi doğrulanmadan asla değiştirilmez
-    if !install::verify(ctx, release, &asset.name, &digest).await? {
+    if !install::verify(ctx, release, &asset.name, &digest, private).await? {
         let _ = std::fs::remove_file(&file);
         return Err("bu sürümün SHA256SUMS.txt dosyası henüz yayımlanmamış; birkaç dakika sonra yeniden deneyin".into());
     }

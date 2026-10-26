@@ -12,11 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
+use launcher_core::auth::asset_url;
 use launcher_core::{paths, select, sums, App, Method, PlatformSpec};
 use sha2::{Digest, Sha256};
 
 use crate::detect;
-use crate::github::Release;
+use crate::github::{self, Release};
 use crate::store::{Record, Store};
 
 /// İlerleme bildirimi: aşama, indirilen bayt, toplam bayt
@@ -27,6 +28,8 @@ pub struct Ctx<'a> {
     pub store: &'a Store,
     pub cancel: Arc<AtomicBool>,
     pub progress: Progress<'a>,
+    /// GitHub girişinin token'ı; yalnızca API adreslerine gönderilir
+    pub token: Option<String>,
 }
 
 /// Kurar ya da günceller; başarıda kullanıcıya gösterilecek kısa bir not döner.
@@ -44,8 +47,8 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
     let name = select::pick(pattern, &names).ok_or_else(|| format!("release'te {pattern} kalıbına uyan dosya yok"))?;
     let asset = release.assets.iter().find(|a| a.name == name).unwrap();
     let file = ctx.store.dir("downloads").join(&asset.name);
-    let digest = download(ctx, &asset.browser_download_url, &file, asset.size).await?;
-    let verified = verify(ctx, release, &asset.name, &digest).await?;
+    let digest = download(ctx, asset_url(&asset.url, &asset.browser_download_url, app.private), &file, asset.size).await?;
+    let verified = verify(ctx, release, &asset.name, &digest, app.private).await?;
     (ctx.progress)("install", 0, 0);
     let file2 = file.clone();
     let note = match spec.method {
@@ -119,13 +122,9 @@ fn folder_name(name: &str) -> String {
 
 /// Dosyayı indirir, indirirken SHA-256 özetini hesaplar.
 pub(crate) async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u64) -> Result<String, String> {
-    let resp = ctx
-        .http
-        .get(url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("indirilemedi: {e}"))?;
+    let resp = get(ctx, url).send().await.map_err(|e| format!("indirilemedi: {e}"))?;
+    github::note_status(resp.status().as_u16(), ctx.token.is_some());
+    let resp = resp.error_for_status().map_err(|e| format!("indirilemedi: {e}"))?;
     let total = resp.content_length().unwrap_or(size_hint);
     let part = dest.with_extension("part");
     let mut out = std::fs::File::create(&part).map_err(|e| format!("dosya yazılamadı: {e}"))?;
@@ -150,15 +149,24 @@ pub(crate) async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// GitHub'dan dosya isteği: API adresine token, release dosyasının API adresine ayrıca
+/// dosyanın kendisini isteyen `Accept` başlığı eklenir.
+fn get(ctx: &Ctx<'_>, url: &str) -> reqwest::RequestBuilder {
+    let req = github::authed(ctx.http.get(url), url, ctx.token.as_deref());
+    if url.contains("/releases/assets/") {
+        req.header("Accept", "application/octet-stream")
+    } else {
+        req
+    }
+}
+
 /// Release'te SHA256SUMS.txt varsa özeti karşılaştırır. Dosya yoksa `Ok(false)`.
-pub(crate) async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str) -> Result<bool, String> {
+pub(crate) async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str, private: bool) -> Result<bool, String> {
     let Some(sums_asset) = release.assets.iter().find(|a| a.name.eq_ignore_ascii_case("SHA256SUMS.txt")) else {
         return Ok(false);
     };
     (ctx.progress)("verify", 0, 0);
-    let text = ctx
-        .http
-        .get(&sums_asset.browser_download_url)
+    let text = get(ctx, asset_url(&sums_asset.url, &sums_asset.browser_download_url, private))
         .send()
         .await
         .and_then(|r| r.error_for_status())

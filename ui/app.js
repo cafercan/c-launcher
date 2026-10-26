@@ -145,6 +145,11 @@ function render() {
   document.querySelectorAll('.views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
 
   let n = 0, html = '';
+  // girişle okunan kaynaklar: giriş yapılana kadar kart yerine giriş paneli
+  data.sources.filter(s => s.from === 'login').forEach(s => {
+    html += `<div class="section-head"><span>${esc(s.group ? s.group.title : 'Giriş gerektiren uygulamalar')}</span></div>
+      <div class="login-panel"><span>Bu bölüm için GitHub hesabınızla giriş yapın.</span><button class="btn" data-act="login">GITHUB İLE GİRİŞ YAP</button></div>`;
+  });
   data.groups.forEach((g, gi) => {
     const list = apps.filter(a => a.group === g.id);
     const shown = list.filter(visible);
@@ -163,7 +168,40 @@ function render() {
   $('#checked').textContent = `SON KONTROL ${ago(data.checked_at)} · ${SOURCE[worstSource()]}`;
   $('#target').textContent = `${data.brand_name.toLocaleUpperCase('tr')} ${data.launcher_version} · KURULUM HEDEFİ: ${OS_NAME[data.os] || data.os}`;
   renderBrand();
+  renderUser();
   renderBanner();
+}
+
+function renderUser() {
+  const u = $('#user');
+  u.hidden = !data.user;
+  u.innerHTML = data.user ? `@${esc(data.user)} · <a href="#" data-act="logout">ÇIKIŞ</a>` : '';
+}
+
+async function login() {
+  try {
+    const code = await invoke('login_start');
+    $('#userCode').textContent = code.user_code;
+    $('#openDevice').dataset.url = code.verification_uri;
+    $('#loginState').textContent = 'Onay bekleniyor…';
+    $('#login').showModal();
+  } catch (e) {
+    toast('Giriş başlatılamadı: ' + e, true);
+    return;
+  }
+  try {
+    const name = await invoke('login_wait');
+    $('#login').close();
+    toast(`@${name} olarak giriş yapıldı`);
+    load(true);
+  } catch (e) {
+    $('#loginState').textContent = String(e);
+  }
+}
+
+async function logout() {
+  await invoke('logout');
+  load(true);
 }
 
 function renderBrand() {
@@ -281,7 +319,9 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
   if (b) {
     const { act, id } = b.dataset;
-    if (act === 'install') install(id);
+    if (act === 'login') { e.preventDefault(); login(); }
+    else if (act === 'logout') { e.preventDefault(); logout(); }
+    else if (act === 'install') install(id);
     else if (act === 'open') open(id);
     else if (act === 'cancel') invoke('cancel', { id });
     else if (act === 'menu') { e.stopPropagation(); showMenu(id, b); }
@@ -307,6 +347,11 @@ $('#updateAll').addEventListener('click', async () => {
   for (const a of data.apps.filter(a => a.status === 'update_available' && !jobs[a.id])) await install(a.id);
 });
 $('#closeChrome').addEventListener('click', () => $('#chrome').close());
+$('#closeLogin').addEventListener('click', () => $('#login').close());
+$('#copyCode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#userCode').textContent); toast('Kod kopyalandı'); }
+  catch { toast('Kopyalanamadı; kodu elle yazın', true); }
+});
 
 // ---------------------------------------------------------------- tema
 function markTheme() {
@@ -383,7 +428,7 @@ function mock(cmd, args) {
   const base = {
     groups: [{ id: 'desktop', title: 'Masaüstü uygulamaları' }, { id: 'terminal', title: 'Terminal araçları' }, { id: 'chrome', title: 'Chrome eklentileri' }],
     os: 'linux', sources: [{ repo: 'cafercan/c-launcher', group: null, from: 'github', error: null }], checked_at: now - 180, launcher_version: '0.1.0', launcher_latest: null, launcher_url: '',
-    brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: false,
+    brand_name: 'C Launcher', home_url: 'https://github.com/cafercan', group_tabs: false, login_enabled: false, user: null,
     apps: [
       { id: 'kitaplik', name: 'Kitaplık', repo: 'cafercan/kitaplik', group: 'desktop', description: 'E-kitap kitaplığı: etiket, filtre, kalite puanı', accent: '#2f6f5e', icon: 'https://raw.githubusercontent.com/cafercan/kitaplik/main/kitaplik.svg', method: 'deb', status: 'update_available', installed: '0.1.0', installed_known: true, latest: '0.2.0', published_at: '2026-10-25T10:00:00Z', size: 31000, needs_reload: false },
       { id: 'mdviewer', name: 'MD Flow Viewer', repo: 'cafercan/MDViewer', group: 'desktop', description: 'Markdown görüntüleyici ve düzenleyici: canlı yenileme, Mermaid', accent: '#3b6fd4', icon: 'https://raw.githubusercontent.com/cafercan/MDViewer/main/public/favicon-192.png', method: 'deb', status: 'not_installed', installed: null, installed_known: false, latest: '2.9.0', published_at: '2026-10-12T10:00:00Z', size: 48200000, needs_reload: false },

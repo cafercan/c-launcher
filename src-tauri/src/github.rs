@@ -3,6 +3,7 @@
 //! (304 Not Modified) bu sınırdan düşmez.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 
 use launcher_core::{merge, Brand, Catalog, Group};
@@ -34,6 +35,9 @@ pub struct Asset {
     pub name: String,
     pub size: u64,
     pub browser_download_url: String,
+    /// API adresi: girişle okunan depolarda dosya buradan indirilir
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,8 +50,55 @@ pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(concat!("c-launcher/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(10))
+        // API, release dosyalarını başka bir sunucuya yönlendirir; reqwest başka sunucuya
+        // giden yönlendirmede Authorization başlığını atar, token oraya taşınmaz
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .expect("http istemcisi")
+}
+
+/// Token'ı, yalnızca adres GitHub API'siyse isteğe ekler.
+pub fn authed(req: reqwest::RequestBuilder, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    match token {
+        Some(t) if launcher_core::auth::token_allowed(url) => req.bearer_auth(t),
+        _ => req,
+    }
+}
+
+/// Bir istekte token reddedildi (süresi doldu, geri alındı ya da kullanıcı ekipten çıkarıldı).
+static UNAUTHORIZED: AtomicBool = AtomicBool::new(false);
+
+/// 401 yalnızca token gönderildiyse girişin geçersiz olduğunu gösterir; 403/404 başka şeydir
+/// (istek sınırı, depoya erişim yok).
+fn needs_login(status: u16, had_token: bool) -> bool {
+    status == 401 && had_token
+}
+
+pub fn note_status(status: u16, had_token: bool) {
+    if needs_login(status, had_token) {
+        UNAUTHORIZED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Son çağrıdan bu yana token reddedildi mi? Okuyunca sıfırlanır.
+pub fn take_unauthorized() -> bool {
+    UNAUTHORIZED.swap(false, Ordering::Relaxed)
+}
+
+/// Token'ın sahibinin GitHub kullanıcı adı.
+pub async fn user(http: &reqwest::Client, token: &str) -> Result<String, String> {
+    let url = "https://api.github.com/user";
+    let resp = authed(http.get(url), url, Some(token))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub'a ulaşılamadı: {e}"))?;
+    note_status(resp.status().as_u16(), true);
+    if !resp.status().is_success() {
+        return Err(format!("GitHub yanıtı: {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    v.get("login").and_then(|l| l.as_str()).map(String::from).ok_or_else(|| "kullanıcı adı okunamadı".into())
 }
 
 /// Bir katalog kaynağının bu yüklemedeki durumu.
@@ -112,15 +163,12 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
 async fn fetch_catalog(http: &reqwest::Client, src: &launcher_core::Source, token: Option<&str>) -> Result<String, String> {
     let req = if src.private {
         let url = format!("https://api.github.com/repos/{}/contents/{}?ref={}", src.repo, src.path, src.branch);
-        let mut req = http.get(url).header("Accept", "application/vnd.github.raw");
-        if let Some(t) = token {
-            req = req.bearer_auth(t);
-        }
-        req
+        authed(http.get(&url), &url, token).header("Accept", "application/vnd.github.raw")
     } else {
         http.get(format!("https://raw.githubusercontent.com/{}/{}/{}", src.repo, src.branch, src.path))
     };
     let resp = req.send().await.map_err(|e| format!("GitHub'a ulaşılamadı: {e}"))?;
+    note_status(resp.status().as_u16(), token.is_some());
     if !resp.status().is_success() {
         return Err(format!("katalog alınamadı: {}", resp.status()));
     }
@@ -138,12 +186,11 @@ fn pick_source(fetched: Option<&str>, cached: Option<&str>, embedded: Option<&st
 
 /// Deponun son release'i. Hiç release yoksa `Ok(None)`.
 /// Ağ hatasında önbellekteki son yanıt kullanılır.
-pub async fn latest_release(http: &reqwest::Client, repo: &str, cache_dir: &Path) -> Result<Option<Release>, String> {
+pub async fn latest_release(http: &reqwest::Client, repo: &str, cache_dir: &Path, token: Option<&str>) -> Result<Option<Release>, String> {
     let cache_file = cache_dir.join(format!("release-{}.json", repo.replace('/', "__")));
     let cached: Option<Cached> = std::fs::read_to_string(&cache_file).ok().and_then(|s| serde_json::from_str(&s).ok());
-    let mut req = http
-        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
-        .header("Accept", "application/vnd.github+json");
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let mut req = authed(http.get(&url), &url, token).header("Accept", "application/vnd.github+json");
     if let Some(etag) = cached.as_ref().and_then(|c| c.etag.clone()) {
         req = req.header("If-None-Match", etag);
     }
@@ -152,6 +199,7 @@ pub async fn latest_release(http: &reqwest::Client, repo: &str, cache_dir: &Path
         Err(e) => return cached.map(|c| c.release).ok_or_else(|| format!("GitHub'a ulaşılamadı: {e}")),
     };
     let status = resp.status();
+    note_status(status.as_u16(), token.is_some());
     if status == reqwest::StatusCode::NOT_MODIFIED {
         if let Some(c) = cached {
             return Ok(c.release);
@@ -174,6 +222,14 @@ pub async fn latest_release(http: &reqwest::Client, repo: &str, cache_dir: &Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unauthorized_maps_to_login_required() {
+        assert!(needs_login(401, true));
+        assert!(!needs_login(401, false));
+        assert!(!needs_login(403, true));
+        assert!(!needs_login(404, true));
+    }
 
     #[test]
     fn catalog_falls_back_per_source() {

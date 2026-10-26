@@ -1,8 +1,10 @@
 //! C Launcher'ın işletim sisteminden bağımsız mantığı: katalog, sürüm karşılaştırma,
 //! release dosyası seçimi, SHA-256 listesi ve uygulama durumu.
 
+pub mod auth;
 pub mod brand;
 pub mod catalog;
+pub mod device;
 pub mod paths;
 pub mod select;
 pub mod status;

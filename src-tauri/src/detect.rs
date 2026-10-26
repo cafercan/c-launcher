@@ -93,6 +93,15 @@ pub fn portable_exe(dir: &Path, spec: &PlatformSpec, id: &str) -> PathBuf {
     }
 }
 
+/// Çalıştırılan dosyadan uygulamanın klasörü (zip'te `run` alt klasör içerebilir).
+pub fn portable_dir_of(exe: &Path, spec: &PlatformSpec) -> Option<PathBuf> {
+    let depth = match spec.method {
+        Method::Zip => Path::new(spec.run.as_deref().unwrap_or_default()).components().count(),
+        _ => 1,
+    };
+    exe.ancestors().nth(depth).map(Path::to_path_buf)
+}
+
 /// Kurulu kopyanın klasörü: önce launcher'ın kaydettiği yer, sonra varsayılan klasör.
 /// Çalıştırılacak dosya orada yoksa kurulu sayılmaz.
 fn portable_location(record: Option<&Path>, default: &Path, spec: &PlatformSpec, id: &str, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
@@ -230,6 +239,9 @@ mod tests {
         assert_eq!(portable_exe(Path::new("C:/a"), &zip, "t"), Path::new("C:/a/bin/tool.exe"));
         let bare: PlatformSpec = serde_json::from_str(r#"{"method":"exe","asset":"t.exe"}"#).unwrap();
         assert_eq!(portable_exe(Path::new("C:/a"), &bare, "tool"), Path::new("C:/a/tool.exe"));
+        // klasör, çalıştırılan dosyadan geri bulunur
+        assert_eq!(portable_dir_of(Path::new("C:/a/bin/tool.exe"), &zip).unwrap(), Path::new("C:/a"));
+        assert_eq!(portable_dir_of(Path::new("C:/a/tool.exe"), &bare).unwrap(), Path::new("C:/a"));
     }
 
     #[test]

@@ -91,10 +91,9 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
             install_chrome(&app.id, &file, &version, &dir, ctx.store)?
         }
         Method::Exe | Method::Zip => {
+            // güncellemede bulunduğu klasörde kalır
             let dir = match before.as_ref().and_then(|i| i.target.as_deref()) {
-                // güncellemede bulunduğu klasörde kalır
-                Some(exe) if spec.method == Method::Exe => exe.parent().map(Path::to_path_buf).ok_or("kurulum yeri bulunamadı")?,
-                Some(_) => ctx.store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).unwrap_or_else(|| detect::portable_default_dir(ctx.store, &app.id)),
+                Some(exe) => detect::portable_dir_of(exe, spec).ok_or("kurulum yeri bulunamadı")?,
                 None => detect::portable_default_dir(ctx.store, &app.id),
             };
             let (app2, spec2, dir2) = (app.clone(), spec.clone(), dir.clone());
@@ -185,6 +184,7 @@ pub(crate) async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest:
     let text = get(ctx, asset_url(&sums_asset.url, &sums_asset.browser_download_url, private))
         .send()
         .await
+        .inspect(|r| github::note_status(r.status().as_u16(), ctx.token.is_some()))
         .and_then(|r| r.error_for_status())
         .map_err(|e| format!("SHA256SUMS.txt indirilemedi: {e}"))?
         .text()
@@ -388,13 +388,16 @@ fn install_portable_windows(app: &App, spec: &PlatformSpec, file: &Path, dir: &P
             replace_exe(file, &detect::portable_exe(dir, spec, &app.id))?;
         }
         _ => {
+            if !one_top_folder(&zip_names(file)?) {
+                return Err("zip'in kökünde tek bir klasör olmalı".into());
+            }
             let staging = dir.with_file_name(format!("{}.new", app.id));
             let _ = std::fs::remove_dir_all(&staging);
             extract_zip(file, &staging, Strip::FirstDir)?;
             let run = spec.run.as_deref().unwrap_or_default();
             if !staging.join(run).is_file() {
                 let _ = std::fs::remove_dir_all(&staging);
-                return Err(format!("arşivde {run} yok (zip'in kökünde tek bir klasör olmalı)"));
+                return Err(format!("arşivde {run} yok"));
             }
             swap_dir(&staging, dir)?;
         }
@@ -417,6 +420,32 @@ fn replace_exe(new: &Path, target: &Path) -> Result<(), String> {
         let _ = std::fs::remove_file(&staged);
         locked(e)
     })
+}
+
+/// Uygulama klasörünü siler. Önce yeniden adlandırılır: uygulama açıksa bu adım tümden
+/// başarısız olur ve klasör olduğu gibi kalır; yarım silinmiş bir kurulum bırakılmaz.
+fn remove_app_dir(dir: &Path) -> Result<(), String> {
+    let doomed = dir.with_file_name(format!("{}.old", dir.file_name().and_then(|n| n.to_str()).unwrap_or("app")));
+    let _ = std::fs::remove_dir_all(&doomed);
+    std::fs::rename(dir, &doomed).map_err(locked)?;
+    std::fs::remove_dir_all(&doomed).map_err(|e| e.to_string())
+}
+
+/// Zip'in kökünde tek bir klasör var mı (adı ne olursa olsun)?
+fn one_top_folder(names: &[String]) -> bool {
+    let mut tops = names.iter().map(|n| n.split_once('/').map(|(top, _)| top));
+    match tops.next() {
+        Some(Some(first)) => tops.all(|t| t == Some(first)),
+        _ => false,
+    }
+}
+
+fn zip_names(file: &Path) -> Result<Vec<String>, String> {
+    let f = std::fs::File::open(file).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(f).map_err(|e| format!("arşiv bozuk: {e}"))?;
+    (0..zip.len())
+        .map(|i| zip.by_index(i).map_err(|e| e.to_string()).and_then(|e| e.name().map(|n| n.replace('\\', "/")).map_err(|e| format!("arşivde geçersiz dosya adı: {e}"))))
+        .collect()
 }
 
 /// Hazırlanan klasörü eskisinin yerine koyar; ikinci adım başarısız olursa eski klasör geri gelir.
@@ -715,20 +744,20 @@ pub fn uninstall(app: &App, spec: &PlatformSpec, store: &Store) -> Result<String
         }
         Method::Exe | Method::Zip => {
             let exe = found.and_then(|i| i.target).ok_or("uygulama bulunamadı")?;
-            let dir = exe.parent().ok_or("kurulum yeri bulunamadı")?;
+            let dir = detect::portable_dir_of(&exe, spec).ok_or("kurulum yeri bulunamadı")?;
             // zip'te klasörün tamamı uygulamanındır; exe'de klasörde yalnızca o dosya silinir
-            let dir = match spec.method {
-                Method::Zip => store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).unwrap_or_else(|| detect::portable_default_dir(store, &app.id)),
-                _ => dir.to_path_buf(),
-            };
             match spec.method {
-                Method::Zip => std::fs::remove_dir_all(&dir).map_err(locked)?,
+                Method::Zip => remove_app_dir(&dir)?,
                 _ => {
                     std::fs::remove_file(&exe).map_err(locked)?;
                     let _ = std::fs::remove_dir(&dir); // boşsa
                 }
             }
-            let _ = std::fs::remove_file(detect::start_menu_shortcut(app));
+            let lnk = detect::start_menu_shortcut(app);
+            let _ = std::fs::remove_file(&lnk);
+            if let Some(folder) = lnk.parent() {
+                let _ = std::fs::remove_dir(folder); // son kısayolsa launcher klasörü de gider
+            }
             Ok("Kaldırıldı".into())
         }
         Method::Chrome => {
@@ -777,6 +806,44 @@ mod tests {
         assert!(sums_required(Method::Zip, true).is_ok());
         // eski yöntemler eskisi gibi: uyarıyla kurulur
         assert!(sums_required(Method::Inno, false).is_ok());
+    }
+
+    #[test]
+    fn zip_must_have_one_top_folder() {
+        let v = |names: &[&str]| one_top_folder(&names.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert!(v(&["tool-1.0-portable/", "tool-1.0-portable/tool.exe", "tool-1.0-portable/lib/x.dll"]));
+        assert!(!v(&["tool.exe", "README.md"]));
+        assert!(!v(&["a/tool.exe", "b/other.exe"]));
+        assert!(!v(&["a/tool.exe", "README.md"]));
+        assert!(!v(&[]));
+    }
+
+    #[test]
+    fn zip_uninstall_removes_whole_folder() {
+        let d = temp("rm");
+        let dir = d.join("tool");
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("tool.exe"), "x").unwrap();
+        remove_app_dir(&dir).unwrap();
+        assert!(!dir.exists() && !d.join("tool.old").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn zip_uninstall_keeps_folder_when_locked() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = temp("rmlock");
+        let dir = d.join("tool");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("data.bin"), "veri").unwrap();
+        std::fs::write(dir.join("tool.exe"), "x").unwrap();
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join("tool.exe")).unwrap();
+        let err = remove_app_dir(&dir).unwrap_err();
+        drop(held);
+        assert!(err.contains("uygulama açık"), "{err}");
+        assert!(dir.join("data.bin").exists(), "kilitliyken hiçbir dosya silinmemeli");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

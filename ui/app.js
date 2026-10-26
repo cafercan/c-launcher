@@ -153,6 +153,11 @@ function render() {
     html += `<div class="section-head"><span>${esc(s.group ? s.group.title : 'Giriş gerektiren uygulamalar')}</span></div>
       <div class="login-panel"><span>Bu bölüm için GitHub hesabınızla giriş yapın.</span><button class="btn" data-act="login">GITHUB İLE GİRİŞ YAP</button></div>`;
   });
+  // listesi hiç alınamayan (çevrimdışı ve önbelleksiz) kaynaklar sessizce kaybolmasın
+  failedSources().filter(s => inTab(loginTabId(s))).forEach(s => {
+    html += `<div class="section-head"><span>${esc(s.group ? s.group.title : s.repo)}</span></div>
+      <div class="login-panel"><span>Bu bölümün listesi alınamadı (çevrimdışı olabilirsiniz). Yenile'ye basarak tekrar deneyin.</span>${s.error ? `<span class="err">${esc(s.error)}</span>` : ''}</div>`;
+  });
   data.groups.forEach((g, gi) => {
     const list = apps.filter(a => a.group === g.id);
     const shown = list.filter(visible);
@@ -176,7 +181,8 @@ function render() {
   renderBanner();
 }
 
-const loginTabId = s => s.group ? s.group.id : 'login';
+const loginTabId = s => s.group ? s.group.id : 'src:' + s.repo;
+const failedSources = () => data.sources.filter(s => s.from === 'none');
 
 // brand.json'da group_tabs açıksa gruplar sekme olur; seçim hatırlanır
 function renderTabs() {
@@ -185,6 +191,7 @@ function renderTabs() {
   if (!data.group_tabs) return;
   const tabs = [['all', 'TÜMÜ', data.apps.length]];
   data.sources.filter(s => s.from === 'login').forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : 'Giriş gerektiren uygulamalar', null]));
+  failedSources().forEach(s => tabs.push([loginTabId(s), s.group ? s.group.title : s.repo, null]));
   data.groups.forEach(g => tabs.push([g.id, g.title, data.apps.filter(a => a.group === g.id).length]));
   if (!tabs.some(t => t[0] === tab)) tab = 'all';
   nav.innerHTML = tabs.map(([id, title, count]) =>

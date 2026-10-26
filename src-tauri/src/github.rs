@@ -178,7 +178,7 @@ async fn fetch_catalog(http: &reqwest::Client, src: &launcher_core::Source, toke
         http.get(format!("https://raw.githubusercontent.com/{}/{}/{}", src.repo, src.branch, src.path))
     };
     let resp = req.send().await.map_err(|e| format!("GitHub'a ulaşılamadı: {e}"))?;
-    note_status(resp.status().as_u16(), token.is_some());
+    note_status(resp.status().as_u16(), src.private && token.is_some());
     if !resp.status().is_success() {
         return Err(format!("katalog alınamadı: {}", resp.status()));
     }

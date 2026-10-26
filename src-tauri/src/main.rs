@@ -228,7 +228,13 @@ fn overview_of(loaded: &Loaded, state: &AppState) -> Overview {
         checked_at: loaded.checked_at,
         launcher_version: env!("CARGO_PKG_VERSION"),
         launcher_latest,
-        launcher_url: format!("https://github.com/{}/releases/latest", github::BRAND.launcher_repo),
+        // depo başka araçlarla paylaşılıyorsa "latest" başka bir aracın sürümü olabilir
+        launcher_url: loaded
+            .launcher_latest
+            .as_ref()
+            .map(|r| r.html_url.clone())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", github::BRAND.launcher_repo)),
         brand_name: &github::BRAND.name,
         home_url: &github::BRAND.home_url,
         group_tabs: github::BRAND.group_tabs,
@@ -287,6 +293,11 @@ async fn install(handle: AppHandle, state: State<'_, AppState>, id: String) -> R
     let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress, token };
     let result = install::install(&app, &spec, &release, &ctx).await;
     state.jobs.lock().unwrap().remove(&id);
+    if github::take_unauthorized() {
+        // giriş geçersiz: liste girişsiz yeniden yüklensin, özel bölümler giriş paneline dönsün
+        state.forget_login();
+        *state.loaded.lock().await = None;
+    }
     let _ = handle.emit("job", JobEvent { id, phase: "done".into(), done: 0, total: 0 });
     result
 }

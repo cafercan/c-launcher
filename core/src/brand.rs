@@ -78,6 +78,10 @@ impl Brand {
         if !valid_repo(&self.launcher_repo) {
             return Err(format!("brand.json: geçersiz launcher_repo {}", self.launcher_repo));
         }
+        // alt çubuktaki bağlantı yalnızca github.com sayfalarını açabilir
+        if !self.home_url.starts_with("https://github.com/") {
+            return Err("brand.json: home_url bir https://github.com/ adresi olmalı".into());
+        }
         if self.launcher_tag_prefix.as_deref().is_some_and(|p| !valid_prefix(p)) {
             return Err("brand.json: geçersiz launcher_tag_prefix".into());
         }
@@ -119,7 +123,7 @@ mod tests {
     }
 
     fn with(edit: &str) -> Result<Brand, String> {
-        let base = r#"{"name":"X","data_dir":"x","launcher_repo":"example-org/x","home_url":"https://example.org","sources":[{"repo":"example-org/x"}]}"#;
+        let base = r#"{"name":"X","data_dir":"x","launcher_repo":"example-org/x","home_url":"https://github.com/example-org","sources":[{"repo":"example-org/x"}]}"#;
         let mut v: serde_json::Value = serde_json::from_str(base).unwrap();
         let patch: serde_json::Value = serde_json::from_str(edit).unwrap();
         for (k, val) in patch.as_object().unwrap() {
@@ -135,6 +139,7 @@ mod tests {
         assert!(with(r#"{"data_dir":"a/b"}"#).is_err());
         assert!(with(r#"{"data_dir":".."}"#).is_err());
         assert!(with(r#"{"launcher_repo":"nope"}"#).is_err());
+        assert!(with(r#"{"home_url":"https://example.org"}"#).is_err());
         assert!(with(r#"{"launcher_tag_prefix":"launcher"}"#).is_err());
         assert!(with(r#"{"launcher_tag_prefix":"launcher-"}"#).is_ok());
         assert!(with(r#"{"login":{"client_id":""}}"#).is_err());

@@ -465,6 +465,10 @@ function mock(cmd, args) {
       { id: 'kedy', name: 'Kedy', repo: 'cafercan/kedy', group: 'chrome', description: 'İmleci kafası ve gözleriyle takip eden sevimli kedi', accent: '#8e44ad', icon: 'https://raw.githubusercontent.com/cafercan/kedy/main/icons/icon128.png', method: 'chrome', status: 'up_to_date', installed: '0.1.4', installed_known: true, latest: '0.1.4', published_at: '2026-08-20T10:00:00Z', needs_reload: true },
     ],
   };
+  // ?login=1: girişle okunan bir kaynak; ?offline=1: listesi alınamayan bir kaynak
+  const q = new URLSearchParams(location.search);
+  if (q.has('login')) base.sources.unshift({ repo: 'example-org/tools', group: { id: 'tools', title: 'Şirket araçları' }, from: 'login', error: null });
+  if (q.has('offline')) base.sources.push({ repo: 'example-org/catalog', group: { id: 'more', title: 'Önerilen uygulamalar' }, from: 'none', error: 'GitHub\'a ulaşılamadı' });
   mock.state = mock.state || base;
   if (cmd === 'overview' || cmd === 'refresh') return Promise.resolve(JSON.parse(JSON.stringify(mock.state)));
   if (cmd === 'install') {

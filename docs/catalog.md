@@ -119,7 +119,8 @@ değiştirmek yeterli:
     { "repo": "example-org/releases", "private": true,
       "mirror": "http://192.0.2.10/releases" },          // isteğe bağlı yerel ayna
     { "repo": "cafercan/c-launcher", "embedded": true,
-      "group": { "id": "public", "title": "Herkese açık uygulamalar" } }
+      "group": { "id": "public", "title": "Herkese açık uygulamalar" },
+      "hide": ["kedy"] }                                 // bu launcher'da gösterilmez
   ]
 }
 ```
@@ -127,7 +128,8 @@ değiştirmek yeterli:
 - **`sources`:** kataloglar sırayla okunup birleştirilir; aynı kimlik iki kaynakta varsa öndeki
   kazanır. `group` verilen bir kaynağın bütün uygulamaları o grupta görünür. Her kaynağın
   ayrı önbelleği vardır; çevrimdışıyken her biri kendi son kopyasına düşer. `embedded` yalnızca
-  launcher'a gömülü `catalog.json`'ın aynısı olan kaynak içindir.
+  launcher'a gömülü `catalog.json`'ın aynısı olan kaynak içindir. `hide`, kaynağın kataloğundaki
+  bazı uygulamaları bu launcher'da göstermez; katalog değişmez.
 - **`private` ve `login`:** özel bir kaynak giriş yapılana kadar okunmaz; yerinde bir giriş paneli
   görünür, diğer kaynaklar girişsiz çalışır. Giriş, GitHub'ın cihaz koduyla giriş akışını kullanır:
   bir **GitHub App** oluşturun (OAuth App değil), "Enable Device Flow"u açın, izin olarak yalnızca

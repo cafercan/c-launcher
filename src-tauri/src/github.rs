@@ -157,7 +157,7 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
             if let Some((c, text)) = fetch_mirror(http, m, "catalog.json").await.ok().and_then(|t| Catalog::parse(&t).ok().map(|c| (c, t))) {
                 let _ = std::fs::write(&cache, text);
                 state.from = "mirror";
-                parts.push(Part { catalog: c, group: src.group.clone(), private: false, mirror: Some(m.clone()) });
+                parts.push(Part { catalog: c, group: src.group.clone(), private: false, mirror: Some(m.clone()), hide: src.hide.clone() });
                 states.push(state);
                 continue;
             }
@@ -185,7 +185,7 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
         }
         state.from = from;
         if let Some(c) = catalog {
-            parts.push(Part { catalog: c, group: src.group.clone(), private: src.private, mirror: None });
+            parts.push(Part { catalog: c, group: src.group.clone(), private: src.private, mirror: None, hide: src.hide.clone() });
         }
         states.push(state);
     }

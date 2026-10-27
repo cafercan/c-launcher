@@ -237,13 +237,16 @@ pub struct Part {
     pub private: bool,
     /// Katalog bu aynadan okundu
     pub mirror: Option<String>,
+    /// Bu kimliklerdeki uygulamalar alınmaz
+    pub hide: Vec<String>,
 }
 
 /// Birden çok kaynağın kataloglarını sırayla birleştirir. Aynı kimlik iki kaynakta varsa
-/// öndeki kazanır. Grup verilmiş bir kaynağın bütün uygulamaları o gruba taşınır.
+/// öndeki kazanır. Grup verilmiş bir kaynağın bütün uygulamaları o gruba taşınır; gizlenen
+/// uygulamalar atlanır.
 pub fn merge(parts: Vec<Part>) -> Catalog {
     let mut out = Catalog { schema: SCHEMA, groups: Vec::new(), apps: Vec::new() };
-    for Part { catalog, group, private, mirror } in parts {
+    for Part { catalog, group, private, mirror, hide } in parts {
         let groups = match &group {
             Some(g) => vec![g.clone()],
             None => catalog.groups,
@@ -254,7 +257,7 @@ pub fn merge(parts: Vec<Part>) -> Catalog {
             }
         }
         for mut app in catalog.apps {
-            if out.apps.iter().any(|a| a.id == app.id) {
+            if hide.contains(&app.id) || out.apps.iter().any(|a| a.id == app.id) {
                 continue;
             }
             if let Some(g) = &group {
@@ -333,7 +336,7 @@ mod tests {
     }
 
     fn part(catalog: Catalog, group: Option<Group>, private: bool) -> Part {
-        Part { catalog, group, private, mirror: None }
+        Part { catalog, group, private, mirror: None, hide: Vec::new() }
     }
 
     fn cat(groups: &[&str], apps: &[(&str, &str)]) -> Catalog {
@@ -355,6 +358,16 @@ mod tests {
         assert!(m.apps.iter().find(|a| a.id == "t").unwrap().mirror.is_none());
         assert_eq!(m.apps.iter().find(|a| a.id == "x").unwrap().mirror.as_deref(), Some("http://10.0.0.5/x"));
         assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn merge_skips_hidden_apps() {
+        let a = cat(&["desktop"], &[("x", "desktop"), ("y", "desktop")]);
+        let b = cat(&["desktop"], &[("x", "desktop")]);
+        // gizlenen yalnızca kendi kaynağında atlanır; başka kaynaktaki aynı kimlik görünür
+        let m = merge(vec![Part { hide: vec!["x".into()], ..part(a, None, false) }, part(b, None, true)]);
+        let ids: Vec<(&str, bool)> = m.apps.iter().map(|a| (a.id.as_str(), a.private)).collect();
+        assert_eq!(ids, [("y", false), ("x", true)]);
     }
 
     #[test]

@@ -48,6 +48,9 @@ pub struct Source {
     /// Bu kaynağın bütün uygulamaları bu grupta gösterilir
     #[serde(default)]
     pub group: Option<Group>,
+    /// Bu kaynağın kataloğunda olup bu launcher'da gösterilmeyecek uygulama kimlikleri
+    #[serde(default)]
+    pub hide: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -483,6 +483,20 @@ function mock(cmd, args) {
   if (q.has('login')) base.sources.unshift({ repo: 'example-org/tools', group: { id: 'tools', title: 'Şirket araçları' }, from: 'login', error: null, has_mirror: true });
   if (q.has('offline')) base.sources.push({ repo: 'example-org/catalog', group: { id: 'more', title: 'Önerilen uygulamalar' }, from: 'none', error: 'GitHub\'a ulaşılamadı', has_mirror: false });
   if (q.has('mirror')) base.sources[base.sources.length - 1].from = 'mirror';
+  // ?tabs=1: şirket görünümü; ortak uygulamalar bir sekmede, 3. parti uygulamalar ayrı sekmede
+  if (q.has('tabs')) {
+    base.brand_name = 'Örnek Launcher';
+    base.groups = [{ id: 'shared', title: 'Ortak uygulamalar' }, { id: 'thirdparty', title: '3. parti kullanışlı uygulamalar' }];
+    base.sources = base.sources.filter(s => s.repo !== 'cafercan/c-launcher');
+    base.sources.push({ repo: 'cafercan/c-launcher', group: base.groups[0], from: 'github', error: null }, { repo: 'example-org/catalog', group: base.groups[1], from: 'github', error: null });
+    base.apps = base.apps.filter(a => a.id !== 'kitaplik').map(a => ({ ...a, group: 'shared' }));
+    const craft = (id, name, description, accent, status, installed) => ({ id, name, repo: `storytold/${id}`, group: 'thirdparty', description, accent, icon: `https://raw.githubusercontent.com/storytold/${id}/main/assets/app-icon/hicolor/128x128/apps/ai.storyteller.${id}.png`, method: 'zip', status, installed, installed_known: !!installed, latest: '0.12.1', published_at: '2026-10-20T10:00:00Z', size: 52000000, needs_reload: false });
+    base.apps.push(
+      craft('wordcraft', 'WordCraft', 'Word belgelerini (.docx) açan ve düzenleyen açık kaynak kelime işlemci', '#2b579a', 'not_installed', null),
+      craft('gridcraft', 'GridCraft', 'Excel dosyalarını (.xlsx) açan ve düzenleyen açık kaynak tablolama programı', '#217346', 'update_available', '0.11.0'),
+      craft('pdfcraft', 'PdfCraft', 'PDF okuyucu ve düzenleyici', '#b30b00', 'not_installed', null),
+    );
+  }
   mock.state = mock.state || base;
   if (cmd === 'overview' || cmd === 'refresh') return Promise.resolve(JSON.parse(JSON.stringify(mock.state)));
   if (cmd === 'install') {

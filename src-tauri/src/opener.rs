@@ -31,6 +31,10 @@ pub fn open_app(spec: &PlatformSpec, installed: &Installed) -> Result<(), String
     match spec.method {
         Method::Inno => {
             let exe = installed.target.as_deref().filter(|p| p.exists()).ok_or("uygulamanın çalıştırılabilir dosyası bulunamadı")?;
+            // exe olmayan dosya (ör. .jar) Windows'taki dosya ilişkilendirmesiyle açılır
+            if !exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+                return spawn(Command::new("explorer").arg(exe));
+            }
             spawn(Command::new(exe).current_dir(exe.parent().unwrap_or(Path::new("."))))
         }
         Method::Dmg => {

@@ -35,7 +35,7 @@ Bir sistem için `platforms` içinde kayıt yoksa kart o sistemde soluk görün�
 
 | `method` | Sistem | Gerekenler | Nasıl kurulur |
 |---|---|---|---|
-| `inno` | Windows | `asset`, `inno_app_id` | Inno Setup kurulumu sessiz kipte çalıştırılır (`/VERYSILENT`). Kurulu sürüm kayıt defterindeki `{AppId}_is1` anahtarından okunur |
+| `inno` | Windows | `asset`, `inno_app_id` | Inno Setup kurulumu sessiz kipte çalıştırılır (`/VERYSILENT`). Kurulu sürüm kayıt defterindeki `{AppId}_is1` anahtarından okunur. Kurulum `UninstallDisplayIcon` yazmıyorsa açılacak dosya `app` ile verilir (kurulum klasörüne göre; `.jar` gibi exe olmayan dosyalar Windows ilişkilendirmesiyle açılır) |
 | `dmg` | macOS | `asset`, `app` | DMG bağlanır, `.app` `/Applications`'a (yazılamıyorsa `~/Applications`'a) kopyalanır. Sürüm `Info.plist`'teki `CFBundleShortVersionString`'den okunur |
 | `deb` | Linux | `asset`, `package`, `run` | `pkexec apt-get install` ile kurulur (sistem parola penceresi açılır). Sürüm `dpkg`'den okunur |
 | `script` | hepsi | `install`, isteğe bağlı `uninstall`, `detect_path` / `detect_paths` | Release'in kaynak arşivi indirilir, depodaki betik çalıştırılır (`.ps1` PowerShell ile, diğerleri bash ile) |

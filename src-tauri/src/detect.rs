@@ -22,7 +22,7 @@ pub struct Installed {
 
 pub fn installed(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Installed> {
     match spec.method {
-        Method::Inno => inno(spec.inno_app_id.as_deref()?),
+        Method::Inno => inno(spec.inno_app_id.as_deref()?, spec.app.as_deref()),
         Method::Dmg => {
             let app = spec.app.as_deref()?;
             // önce launcher'ın seçilen klasöre kurduğu kopya
@@ -130,8 +130,18 @@ pub fn extension_dir(store: &Store, id: &str) -> PathBuf {
     }
 }
 
+/// Inno kaydında açılacak dosya: kurulumun bildirdiği simge dosyası, yoksa kurulum
+/// klasöründeki `app` (katalogda verildiyse).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn inno_target(display_icon: Option<String>, install_location: Option<String>, app: Option<&str>) -> Option<PathBuf> {
+    // DisplayIcon "C:\...\App.exe,0" biçiminde olabilir
+    display_icon
+        .map(|s| PathBuf::from(s.rsplit_once(',').map_or(s.as_str(), |(p, _)| p).trim_matches('"')))
+        .or_else(|| Some(PathBuf::from(install_location?.trim_matches('"')).join(app?)))
+}
+
 #[cfg(windows)]
-fn inno(app_id: &str) -> Option<Installed> {
+fn inno(app_id: &str, app: Option<&str>) -> Option<Installed> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::RegKey;
 
@@ -144,8 +154,7 @@ fn inno(app_id: &str) -> Option<Installed> {
     for (hive, flags) in places {
         let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(&path, flags) else { continue };
         let get = |name: &str| key.get_value::<String, _>(name).ok().filter(|s| !s.is_empty());
-        // DisplayIcon "C:\...\App.exe,0" biçiminde olabilir
-        let exe = get("DisplayIcon").map(|s| PathBuf::from(s.rsplit_once(',').map_or(s.as_str(), |(p, _)| p).trim_matches('"')));
+        let exe = inno_target(get("DisplayIcon"), get("InstallLocation"), app);
         let uninstall = get("QuietUninstallString").or_else(|| get("UninstallString").map(|u| format!("{u} /VERYSILENT /SUPPRESSMSGBOXES /NORESTART")));
         return Some(Installed { version: get("DisplayVersion"), target: exe, uninstall, portable: false });
     }
@@ -153,7 +162,7 @@ fn inno(app_id: &str) -> Option<Installed> {
 }
 
 #[cfg(not(windows))]
-fn inno(_app_id: &str) -> Option<Installed> {
+fn inno(_app_id: &str, _app: Option<&str>) -> Option<Installed> {
     None
 }
 
@@ -217,6 +226,17 @@ fn debian_upstream(v: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inno_target_falls_back_to_install_folder() {
+        let icon = Some(r#""C:\P\Apppp.exe",0"#.to_string());
+        let loc = Some(r"C:\P\App\".to_string());
+        assert_eq!(inno_target(icon, loc.clone(), Some("x.jar")), Some(PathBuf::from(r"C:\P\Apppp.exe")));
+        // simge kaydı boşsa kurulum klasörü + katalogdaki app
+        assert_eq!(inno_target(None, loc.clone(), Some("Control_Terminal.jar")), Some(PathBuf::from(r"C:\P\App\").join("Control_Terminal.jar")));
+        assert_eq!(inno_target(None, loc, None), None);
+        assert_eq!(inno_target(None, None, Some("a.exe")), None);
+    }
 
     fn exe_spec() -> PlatformSpec {
         serde_json::from_str(r#"{"method":"exe","asset":"Tool-v*.exe","app":"Tool.exe"}"#).unwrap()

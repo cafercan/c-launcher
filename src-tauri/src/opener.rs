@@ -26,6 +26,17 @@ pub fn open_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// Bir klasörü dosya yöneticisinde açar.
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    if cfg!(windows) {
+        spawn(Command::new("explorer").arg(dir))
+    } else if cfg!(target_os = "macos") {
+        spawn(Command::new("open").arg(dir))
+    } else {
+        spawn(Command::new("xdg-open").arg(dir))
+    }
+}
+
 /// Kurulu bir uygulamayı başlatır.
 pub fn open_app(spec: &PlatformSpec, installed: &Installed) -> Result<(), String> {
     match spec.method {

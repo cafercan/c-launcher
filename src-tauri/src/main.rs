@@ -236,6 +236,16 @@ struct Opened {
     usage: Option<String>,
 }
 
+/// Chrome eklentisinin klasörünü dosya yöneticisinde gösterir.
+#[tauri::command]
+async fn open_folder(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let dir = detect::extension_dir(&state.store, &id);
+    if !dir.is_dir() {
+        return Err("eklentinin klasörü bulunamadı".into());
+    }
+    opener::open_folder(&dir)
+}
+
 #[tauri::command]
 async fn open(state: State<'_, AppState>, id: String) -> Result<Opened, String> {
     let (app, _) = find(&state, &id).await?;
@@ -409,6 +419,7 @@ fn main() {
             cancel,
             open,
             uninstall,
+            open_folder,
             settings,
             set_install_root,
             update_launcher,

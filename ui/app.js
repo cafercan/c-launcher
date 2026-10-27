@@ -250,7 +250,7 @@ function showMenu(id, anchor) {
   const app = data.apps.find(a => a.id === id);
   const items = [[`GITHUB'DA GÖRÜNTÜLE`, () => invoke('open_url', { url: `https://github.com/${app.repo}` })]];
   if (app.release_url) items.push(['SÜRÜM NOTLARI', () => invoke('open_url', { url: app.release_url })]);
-  if (app.status === 'up_to_date' && app.method === 'chrome') items.push(['KLASÖRÜ GÖSTER', () => open(id)]);
+  if (app.installed_known && app.method === 'chrome') items.push(['KLASÖRÜ GÖSTER', () => invoke('open_folder', { id }).catch(e => toast('Açılamadı: ' + e, true))]);
   if (app.installed_known && app.status !== 'unsupported') items.push(['YENİDEN KUR', () => install(id)]);
   if (app.installed_known) items.push(['KALDIR', () => uninstall(id), 'danger']);
   const menu = $('#menu');

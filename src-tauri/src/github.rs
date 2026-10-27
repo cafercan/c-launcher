@@ -151,6 +151,13 @@ pub async fn catalog(http: &reqwest::Client, cache_dir: &Path, token: Option<&st
     let mut states = Vec::new();
     for src in &BRAND.sources {
         let mut state = SourceState { repo: src.repo.clone(), group: src.group.clone(), from: "none", error: None, has_mirror: src.mirror.is_some() };
+        // brand.json'a gömülü liste: okunacak bir yer yok (geçerliliği derlemede denetlendi)
+        if let Some(Ok(c)) = src.inline_catalog() {
+            state.from = "brand";
+            parts.push(Part { catalog: c, group: src.group.clone(), private: false, mirror: None, hide: src.hide.clone() });
+            states.push(state);
+            continue;
+        }
         let cache = cache_dir.join(format!("catalog-{}.json", src.repo.replace('/', "__")));
         // ofis ağındaysak: yerel aynadan, girişsiz
         if let Some(m) = &src.mirror {

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{valid_prefix, valid_repo, Group};
+use crate::catalog::{valid_prefix, valid_repo, Catalog, Group};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brand {
@@ -29,7 +29,8 @@ pub struct Brand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
-    /// "sahip/depo"
+    /// "sahip/depo"; `catalog` verilen kaynakta boş kalır
+    #[serde(default)]
     pub repo: String,
     #[serde(default = "default_path")]
     pub path: String,
@@ -51,6 +52,17 @@ pub struct Source {
     /// Bu kaynağın kataloğunda olup bu launcher'da gösterilmeyecek uygulama kimlikleri
     #[serde(default)]
     pub hide: Vec<String>,
+    /// Launcher'a gömülü katalog (catalog.json biçiminde): hiçbir yerden okunmaz, değişmesi
+    /// için launcher yeniden derlenir
+    #[serde(default)]
+    pub catalog: Option<serde_json::Value>,
+}
+
+impl Source {
+    /// Gömülü katalog, geçerliyse.
+    pub fn inline_catalog(&self) -> Option<Result<Catalog, String>> {
+        self.catalog.as_ref().map(|v| Catalog::parse(&v.to_string()))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +111,13 @@ impl Brand {
             return Err("brand.json: login.client_id boş".into());
         }
         for s in &self.sources {
+            if let Some(c) = s.inline_catalog() {
+                c.map_err(|e| format!("brand.json: gömülü katalog: {e}"))?;
+                if !s.repo.is_empty() || s.private || s.embedded || s.mirror.is_some() {
+                    return Err("brand.json: gömülü katalog verilen kaynakta repo, private, embedded ve mirror olmaz".into());
+                }
+                continue;
+            }
             if !valid_repo(&s.repo) || !crate::paths::is_plain_relative(&s.path) || s.branch.is_empty() {
                 return Err(format!("brand.json: geçersiz katalog kaynağı {}", s.repo));
             }
@@ -145,6 +164,20 @@ mod tests {
             v[k] = val.clone();
         }
         Brand::parse(&v.to_string())
+    }
+
+    #[test]
+    fn inline_catalog_source() {
+        let cat = r#"{"schema":1,"groups":[{"id":"t","title":"T"}],"apps":[{"id":"a","name":"A","repo":"example-org/a","group":"t","platforms":{}}]}"#;
+        let b = with(&format!(r#"{{"sources":[{{"catalog":{cat}}}]}}"#)).unwrap();
+        assert_eq!(b.sources[0].inline_catalog().unwrap().unwrap().apps[0].id, "a");
+        // gömülü katalog okunacak bir yer göstermez
+        assert!(with(&format!(r#"{{"sources":[{{"catalog":{cat},"repo":"example-org/x"}}]}}"#)).is_err());
+        assert!(with(&format!(r#"{{"sources":[{{"catalog":{cat},"mirror":"http://10.0.0.5/x"}}]}}"#)).is_err());
+        // geçersiz katalog derlemede yakalanır
+        assert!(with(r#"{"sources":[{"catalog":{"schema":1,"groups":[],"apps":[{"id":"Bad"}]}}]}"#).is_err());
+        // repo'suz ve katalogsuz kaynak geçersiz
+        assert!(with(r#"{"sources":[{}]}"#).is_err());
     }
 
     #[test]

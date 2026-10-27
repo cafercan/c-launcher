@@ -130,6 +130,10 @@ değiştirmek yeterli:
   ayrı önbelleği vardır; çevrimdışıyken her biri kendi son kopyasına düşer. `embedded` yalnızca
   launcher'a gömülü `catalog.json`'ın aynısı olan kaynak içindir. `hide`, kaynağın kataloğundaki
   bazı uygulamaları bu launcher'da göstermez; katalog değişmez.
+- **`catalog`:** `repo` yerine doğrudan bir katalog (catalog.json biçiminde) verilebilir. Liste
+  launcher'a gömülür, girişsiz ve ağsız görünür; bir depo gerekmez. Bedeli: listeye uygulama
+  eklemek için launcher'ın yeni sürümü çıkar. Uygulamalar yine kendi depolarının release'lerinden
+  iner.
 - **`private` ve `login`:** özel bir kaynak giriş yapılana kadar okunmaz; yerinde bir giriş paneli
   görünür, diğer kaynaklar girişsiz çalışır. Giriş, GitHub'ın cihaz koduyla giriş akışını kullanır:
   bir **GitHub App** oluşturun (OAuth App değil), "Enable Device Flow"u açın, izin olarak yalnızca

@@ -163,7 +163,8 @@ function render() {
       <div class="notice warn">${WARN}<span>Bu bölümün listesi alınamadı; çevrimdışı olabilirsiniz. Yenile'ye basarak tekrar deneyin.${s.error ? ` <span class="why">${esc(s.error)}</span>` : ''}</span></div>`;
   });
   data.groups.forEach((g, gi) => {
-    const list = apps.filter(a => a.group === g.id);
+    // bu sistemde kurulamayanlar grubun sonunda
+    const list = apps.filter(a => a.group === g.id).sort((a, b) => (a.status === 'unsupported') - (b.status === 'unsupported'));
     const shown = list.filter(visible);
     if (!inTab(g.id)) { n += list.length; return; }
     if (!shown.length) { n += list.length; return; }

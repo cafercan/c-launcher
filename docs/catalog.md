@@ -144,9 +144,9 @@ değiştirmek yeterli:
   token'ı kullanmaz: kullanıcıların her gün yeniden giriş yapmaması için uygulamanın ayarlarında
   "User-to-server token expiration"ı kapatın.
 - **`mirror`:** yerel ağdaki bir web sunucusu. Launcher açılışta bu adresi en çok 2 saniye
-  dener; ulaşırsa kataloğu (`<mirror>/catalog.json`) ve release listesini (`<mirror>/releases.json`,
-  GitHub'ın `/releases` yanıtıyla aynı biçimde, indirme adresleri aynayı gösterir) girişsiz oradan
-  okur. Ulaşamazsa kaynak her zamanki gibi GitHub'dan (özelse girişle) okunur. Dosyalar aynada da
+  dener; ulaşırsa kataloğu (`<mirror>/catalog.json`) ve her uygulama deposunun release listesini
+  (`<mirror>/releases/<sahip>/<depo>.json`, GitHub'ın `/releases` yanıtıyla aynı biçimde, indirme
+  adresleri aynayı gösterir) girişsiz oradan okur. Ulaşamazsa kaynak her zamanki gibi GitHub'dan (özelse girişle) okunur. Dosyalar aynada da
   `SHA256SUMS.txt` ile doğrulanır. Aynanın içeriğini GitHub'dan düzenli olarak indirmek kurulumun
   işidir; launcher yalnızca okur.
 - **Derleme:** `src-tauri/brand.json` ve `src-tauri/icons/` değiştirilip

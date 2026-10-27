@@ -133,18 +133,18 @@ async fn fetch_once(state: &AppState) -> Loaded {
     let (catalog, sources) = github::catalog(&state.http, &cache, token.as_deref()).await;
     // token yalnızca girişle okunan kaynakların depolarına gider
     let token_for = |private: bool| token.clone().filter(|_| private);
-    // yerel aynadan okunan uygulamalar: ayna başına tek liste, giriş gerekmez
-    let mut by_mirror: std::collections::BTreeMap<&str, Vec<&App>> = Default::default();
+    // yerel aynadan okunan uygulamalar: ayna ve depo başına tek liste, giriş gerekmez
+    let mut by_mirror: std::collections::BTreeMap<(&str, &str), Vec<&App>> = Default::default();
     for a in &catalog.apps {
         if let Some(m) = &a.mirror {
-            by_mirror.entry(m).or_default().push(a);
+            by_mirror.entry((m, &a.repo)).or_default().push(a);
         }
     }
-    let mirrored = by_mirror.into_iter().map(|(mirror, apps)| {
-        let (http, mirror) = (state.http.clone(), mirror.to_string());
+    let mirrored = by_mirror.into_iter().map(|((mirror, repo), apps)| {
+        let (http, mirror, repo) = (state.http.clone(), mirror.to_string(), repo.to_string());
         let wanted: Vec<(String, String)> = apps.iter().map(|a| (a.id.clone(), a.tag_prefix.clone().unwrap_or_default())).collect();
         async move {
-            let list = github::mirror_releases(&http, &mirror).await;
+            let list = github::mirror_releases(&http, &mirror, &repo).await;
             wanted.iter().map(|(id, p)| (id.clone(), list.as_ref().map(|l| github::pick_prefixed(l, p)).map_err(Clone::clone))).collect::<Vec<_>>()
         }
     });

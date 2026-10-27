@@ -138,9 +138,10 @@ async fn fetch_mirror(http: &reqwest::Client, mirror: &str, file: &str) -> Resul
     resp.text().await.map_err(|e| e.to_string())
 }
 
-/// Aynadaki release listesi (`releases.json`, GitHub'ın liste biçiminde; indirme adresleri aynayı gösterir).
-pub async fn mirror_releases(http: &reqwest::Client, mirror: &str) -> Result<Vec<Release>, String> {
-    let text = fetch_mirror(http, mirror, "releases.json").await?;
+/// Aynadaki bir deponun release listesi (`releases/<sahip>/<depo>.json`, GitHub'ın liste biçiminde;
+/// indirme adresleri aynayı gösterir).
+pub async fn mirror_releases(http: &reqwest::Client, mirror: &str, repo: &str) -> Result<Vec<Release>, String> {
+    let text = fetch_mirror(http, mirror, &format!("releases/{repo}.json")).await?;
     serde_json::from_str(&text).map_err(|e| format!("yerel sunucudaki release listesi okunamadı: {e}"))
 }
 
@@ -284,7 +285,7 @@ pub async fn launcher_release(http: &reqwest::Client, cache_dir: &Path, token: O
     let repo = &BRAND.launcher_repo;
     let prefix = BRAND.launcher_tag_prefix.as_deref();
     if let Some(m) = mirror {
-        if let Ok(list) = mirror_releases(http, m).await {
+        if let Ok(list) = mirror_releases(http, m, repo).await {
             return Ok(pick_prefixed(&list, prefix.unwrap_or("")));
         }
     }
@@ -394,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn mirror_releases_reads_list_and_fails_fast() {
         let body = r#"[{"tag_name":"tool-v1.2.0","assets":[{"name":"Tool-v1.2.0.exe","size":3,"browser_download_url":"http://192.0.2.10/x/files/tool-v1.2.0/Tool-v1.2.0.exe","url":""}]}]"#;
-        let list = mirror_releases(&client(), &serve_once(body)).await.unwrap();
+        let list = mirror_releases(&client(), &serve_once(body), "example-org/tool").await.unwrap();
         let r = pick_prefixed(&list, "tool-").unwrap();
         assert_eq!(r.tag_name, "v1.2.0");
         // ayna adresi indirme adresi olarak kalır; token gitmez
@@ -402,7 +403,7 @@ mod tests {
         // kapalı bir port: kısa sürede hata
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         let started = std::time::Instant::now();
-        assert!(mirror_releases(&client(), &format!("http://{closed}")).await.is_err());
+        assert!(mirror_releases(&client(), &format!("http://{closed}"), "example-org/tool").await.is_err());
         assert!(started.elapsed() < MIRROR_TIMEOUT + std::time::Duration::from_secs(1));
     }
 

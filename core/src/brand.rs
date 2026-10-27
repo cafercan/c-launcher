@@ -43,7 +43,7 @@ pub struct Source {
     #[serde(default)]
     pub embedded: bool,
     /// Yerel ağdaki ayna (ör. "http://192.0.2.10/araclar"): ulaşılabiliyorsa katalog ve
-    /// release'ler girişsiz buradan okunur (`catalog.json`, `releases.json`)
+    /// release'ler girişsiz buradan okunur (`catalog.json`, `releases/<sahip>/<depo>.json`)
     #[serde(default)]
     pub mirror: Option<String>,
     /// Bu kaynağın bütün uygulamaları bu grupta gösterilir

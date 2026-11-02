@@ -54,6 +54,22 @@
       }
     },
     {
+      "id": "session-station",
+      "name": "SessionStation",
+      "repo": "cafercan/session-station",
+      "group": "desktop",
+      "description": "Claude Code oturumları, ajanları ve terminalleri tek pencerede",
+      "accent": "#0e9c8f",
+      "icon": "https://raw.githubusercontent.com/cafercan/session-station/main/src-tauri/icons/128x128.png",
+      "platforms": {
+        "windows": {
+          "method": "inno",
+          "asset": "SessionStation-*-windows-x64-setup.exe",
+          "inno_app_id": "{CDE4B130-56B7-4231-A31A-76303DB23395}"
+        }
+      }
+    },
+    {
       "id": "xd",
       "name": "xd",
       "repo": "cafercan/xd",

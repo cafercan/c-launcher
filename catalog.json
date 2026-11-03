@@ -55,18 +55,19 @@
     },
     {
       "id": "session-station",
-      "name": "SessionStation",
-      "repo": "cafercan/session-station",
+      "name": "AI C-Station",
+      "repo": "cafercan/aicstation",
       "group": "desktop",
       "description": "Claude Code oturumları, ajanları ve terminalleri tek pencerede",
       "accent": "#0e9c8f",
-      "icon": "https://raw.githubusercontent.com/cafercan/session-station/main/src-tauri/icons/128x128.png",
+      "icon": "https://raw.githubusercontent.com/cafercan/aicstation/main/src-tauri/icons/128x128.png",
       "platforms": {
         "windows": {
           "method": "inno",
-          "asset": "SessionStation-*-windows-x64-setup.exe",
+          "asset": "AICStation-*-windows-x64-setup.exe",
           "inno_app_id": "{CDE4B130-56B7-4231-A31A-76303DB23395}"
-        }
+        },
+        "linux": { "method": "deb", "asset": "AICStation-*-linux-amd64.deb", "package": "aic-station", "run": "aicstation" }
       }
     },
     {

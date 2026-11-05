@@ -37,7 +37,7 @@ Bir sistem için `platforms` içinde kayıt yoksa kart o sistemde soluk görün�
 |---|---|---|---|
 | `inno` | Windows | `asset`, `inno_app_id` | Inno Setup kurulumu sessiz kipte çalıştırılır (`/VERYSILENT`). Kurulu sürüm kayıt defterindeki `{AppId}_is1` anahtarından okunur |
 | `dmg` | macOS | `asset`, `app` | DMG bağlanır, `.app` `/Applications`'a (yazılamıyorsa `~/Applications`'a) kopyalanır. Sürüm `Info.plist`'teki `CFBundleShortVersionString`'den okunur |
-| `deb` | Linux | `asset`, `package`, `run` | `pkexec apt-get install` ile kurulur (sistem parola penceresi açılır). Sürüm `dpkg`'den okunur |
+| `deb` | Linux | `asset`, `package`, `run`; isteğe bağlı `pacman`, `portable` | apt olan sistemlerde `pkexec apt-get install` ile kurulur (sistem parola penceresi açılır), sürüm `dpkg`'den okunur. apt olmayan dağıtımlar için aşağıdaki [Arch ve diğer dağıtımlar](#arch-ve-diğer-dağıtımlar) bölümüne bakın |
 | `script` | hepsi | `install`, isteğe bağlı `uninstall`, `detect_path` / `detect_paths` | Release'in kaynak arşivi indirilir, depodaki betik çalıştırılır (`.ps1` PowerShell ile, diğerleri bash ile) |
 | `chrome` | hepsi (`any`) | `asset` | Eklenti zip'i launcher'ın veri klasörüne açılır; kullanıcı Chrome'a bir kez "Paketlenmemiş öğe yükle" ile ekler. Güncellemeler aynı klasöre yazılır |
 
@@ -50,6 +50,29 @@ yönlendirilmiş olabilir, `~/Documents` yazmak yetmez). `{documents}` yalnızca
 kullanılmalı: eski launcher sürümleri `detect_paths`'i yok sayar, `detect_path`'teki yer tutucuyu
 ise düz yol sanıp kurulu aracı kurulu değil gösterir. Algılama yolu yoksa yalnızca launcher'ın
 kendi kurulum kaydına bakılır.
+
+## Arch ve diğer dağıtımlar
+
+`.deb` paketleri yalnızca apt/dpkg olan sistemlerde (Debian, Ubuntu, Mint…) kurulabilir.
+Launcher açılışta sistemde `apt-get`/`dpkg-query` ve `pacman` olup olmadığına bakar ve bir `deb`
+uygulamasını şu sırayla kurar:
+
+1. apt varsa `.deb` (kullanıcı kurulum klasörü seçtiyse ve `portable` varsa taşınabilir paket)
+2. apt yok, `pacman` var ve katalogda `pacman` tarifi varsa `.pkg.tar.zst`, `pkexec pacman -U` ile
+   (Arch, Manjaro, EndeavourOS…). Sürüm `pacman -Q`'dan okunur
+3. `portable` varsa taşınabilir `.tar.gz` (klasör seçilmemişse launcher'ın veri klasörüne,
+   `~/.local/share/c-launcher/apps` altına)
+4. hiçbiri yoksa kart "Bu sistem için yok" görünür
+
+```json
+"linux": {
+  "method": "deb", "asset": "AICStation-*-linux-amd64.deb", "package": "aic-station", "run": "aicstation",
+  "pacman": { "asset": "AICStation-*-linux-x86_64.pkg.tar.zst", "package": "aicstation-bin" }
+}
+```
+
+`pacman.package`, paketin pacman'deki adıdır (`.deb` adından farklı olabilir). Güncellemeler
+uygulama hangi biçimle kurulduysa onunla yapılır. Eski launcher sürümleri `pacman` alanını yok sayar.
 
 ## Kurulum klasörü
 
@@ -89,7 +112,9 @@ kurulmuş uygulamalar güncellemede bulundukları yerde kalır:
    sonra değişmemeli. Güncelleme aynı kimlikle aynı yere kurulduğu için kullanıcının "varsayılan
    uygulama" ve dosya ilişkilendirme ayarları korunur.
 3. **`SHA256SUMS.txt` ekleyin.** `sha256sum * > SHA256SUMS.txt` çıktısı. Varsa launcher her
-   dosyayı kurmadan önce doğrular, tutmazsa kurmaz.
+   dosyayı kurmadan önce doğrular, tutmazsa kurmaz. Özetler sisteme göre ayrı dosyalara
+   bölünmüşse (`SHA256SUMS-linux.txt`, `SHA256SUMS-arch.txt`) hepsi okunur; listede adı olmayan
+   dosya kurulmaz.
 4. **Dosya adları tutarlı olsun.** Her sürümde aynı kalıba uysun (yalnızca sürüm numarası değişsin).
 5. **Windows kurulumu sessiz kipte çalışabilmeli.** Inno Setup'ta `CloseApplications=yes` açık
    uygulamayı güvenle kapatır. Kullanıcı başına kurulum (`PrivilegesRequired=lowest`) yönetici izni istemez.

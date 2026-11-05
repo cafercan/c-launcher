@@ -2,13 +2,14 @@
 //! release dosyası seçimi, SHA-256 listesi ve uygulama durumu.
 
 pub mod catalog;
+pub mod linux;
 pub mod paths;
 pub mod select;
 pub mod status;
 pub mod sums;
 pub mod version;
 
-pub use catalog::{App, Catalog, Group, Method, PlatformSpec, Portable};
+pub use catalog::{App, Catalog, Group, Method, Pacman, PlatformSpec, Portable};
 pub use status::Status;
 pub use version::Version;
 

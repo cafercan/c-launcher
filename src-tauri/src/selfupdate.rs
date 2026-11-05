@@ -90,7 +90,7 @@ fn apply(kind: Kind, file: &Path, relaunch: bool) -> Result<(), String> {
         }
         Kind::Deb => {
             let path = file.to_string_lossy();
-            let out = install::pkexec(&["apt-get", "install", "-y", "--allow-downgrades", &path])?;
+            let out = install::apt_get(&["install", "-y", "--allow-downgrades", &path])?;
             if !out.status.success() {
                 return Err(format!("paket kurulamadı: {}", install::output_tail(&out)));
             }

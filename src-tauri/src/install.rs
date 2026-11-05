@@ -357,9 +357,18 @@ pub(crate) fn pkexec(args: &[&str]) -> Result<std::process::Output, String> {
     })
 }
 
+/// `pkexec apt-get <args>`. Arka planda unattended-upgrades gibi bir işlem dpkg kilidini
+/// tutuyorsa apt hemen hata vermek yerine kilit boşalana kadar en fazla 5 dakika bekler
+/// (`DPkg::Lock::Timeout`, apt ≥ 1.9.11 / Ubuntu 20.04+; eski apt seçeneği yok sayar).
+pub(crate) fn apt_get(args: &[&str]) -> Result<std::process::Output, String> {
+    let mut full = vec!["apt-get", "-o", "DPkg::Lock::Timeout=300"];
+    full.extend_from_slice(args);
+    pkexec(&full)
+}
+
 fn install_deb(file: &Path) -> Result<String, String> {
     let path = file.to_string_lossy();
-    let out = pkexec(&["apt-get", "install", "-y", "--allow-downgrades", &path])?;
+    let out = apt_get(&["install", "-y", "--allow-downgrades", &path])?;
     match out.status.code() {
         Some(0) => Ok("Kuruldu".into()),
         Some(126) | Some(127) => Err("yönetici izni verilmedi".into()),
@@ -649,7 +658,7 @@ pub fn uninstall(app: &App, spec: &PlatformSpec, store: &Store) -> Result<String
         Method::Deb if found.is_none() => Err("uygulama kurulu değil".into()),
         Method::Deb => {
             let package = spec.package.as_deref().unwrap_or_default();
-            let out = pkexec(&["apt-get", "remove", "-y", package])?;
+            let out = apt_get(&["remove", "-y", package])?;
             match out.status.code() {
                 Some(0) => Ok("Kaldırıldı".into()),
                 Some(126) | Some(127) => Err("yönetici izni verilmedi".into()),

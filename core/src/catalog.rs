@@ -89,6 +89,19 @@ pub struct PlatformSpec {
     /// Linux: kullanıcı bir kurulum klasörü seçtiyse .deb yerine kullanılacak taşınabilir paket
     #[serde(default)]
     pub portable: Option<Portable>,
+    /// Linux: apt olmayan, pacman olan sistemlerde (Arch, Manjaro, EndeavourOS…) .deb yerine
+    /// kurulacak paket
+    #[serde(default)]
+    pub pacman: Option<Pacman>,
+}
+
+/// pacman paketi (`.pkg.tar.zst`), `pacman -U` ile kurulur.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pacman {
+    /// Release dosyası kalıbı, örneğin "aicstation-*-linux-x86_64.pkg.tar.zst"
+    pub asset: String,
+    /// Paketin pacman'deki adı (`.deb` paket adından farklı olabilir)
+    pub package: String,
 }
 
 /// Seçilen klasöre açılan `.tar.gz` paketi.
@@ -176,6 +189,11 @@ impl Catalog {
                         return Err(format!("{where_}: taşınabilir paket tarifi geçersiz"));
                     }
                 }
+                if let Some(p) = &spec.pacman {
+                    if p.asset.is_empty() || !valid_pacman_name(&p.package) {
+                        return Err(format!("{where_}: pacman paketi tarifi geçersiz"));
+                    }
+                }
                 if spec.detect_candidates().any(str::is_empty) {
                     return Err(format!("{where_}: boş algılama yolu"));
                 }
@@ -193,6 +211,11 @@ impl Catalog {
 /// Uygulama kimliği klasör adı olarak da kullanılır: yalnızca küçük harf, rakam ve tire.
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// pacman paket adı komut satırına argüman olarak gider: seçenek gibi görünmesin.
+fn valid_pacman_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with(['-', '.']) && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "@._+-".contains(c))
 }
 
 fn valid_repo(repo: &str) -> bool {
@@ -261,5 +284,7 @@ mod tests {
         let deb = r#""method":"deb","asset":"a.deb","package":"a""#;
         assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"portable":{{"asset":"a.tar.gz","run":"a/run"}}}}}}}}"#)).is_ok());
         assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"portable":{{"asset":"a.tar.gz","run":"/bin/sh"}}}}}}}}"#)).is_err());
+        assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"pacman":{{"asset":"a.pkg.tar.zst","package":"a-bin"}}}}}}}}"#)).is_ok());
+        assert!(with(&format!(r#"{{"id":"a","repo":"x/y","name":"A","group":"desktop","platforms":{{"linux":{{{deb},"pacman":{{"asset":"a.pkg.tar.zst","package":"--noconfirm"}}}}}}}}"#)).is_err());
     }
 }

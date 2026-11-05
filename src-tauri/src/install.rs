@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::StreamExt;
+use launcher_core::linux::{self, Plan};
 use launcher_core::{paths, select, sums, App, Method, PlatformSpec};
 use sha2::{Digest, Sha256};
 
@@ -27,6 +29,39 @@ pub struct Ctx<'a> {
     pub store: &'a Store,
     pub cancel: Arc<AtomicBool>,
     pub progress: Progress<'a>,
+    /// Bütün işlerin paylaştığı kurulum kilidi: indirmeler paralel yürür, kurulum adımı sırayla.
+    pub install_lock: &'a tokio::sync::Mutex<()>,
+}
+
+/// Kurulum sırası: aynı anda yalnızca bir kurulum çalışır. Paket yöneticileri (apt, pacman)
+/// kilitlerini başka bir kurulumla paylaşmaz, Inno Setup da tek seferde bir kurulum çalıştırır;
+/// ayrıca her işin parola penceresi aynı anda açılmasın. Sıra beklenirken "queued" bildirilir
+/// ve iptal edilebilir.
+pub(crate) async fn install_slot<'a>(ctx: &Ctx<'a>) -> Result<tokio::sync::MutexGuard<'a, ()>, String> {
+    let lock: &'a tokio::sync::Mutex<()> = ctx.install_lock;
+    let guard = match lock.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            (ctx.progress)("queued", 0, 0);
+            let wait = lock.lock();
+            tokio::pin!(wait);
+            loop {
+                tokio::select! {
+                    g = &mut wait => break g,
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                        if ctx.cancel.load(Ordering::Relaxed) {
+                            return Err("iptal edildi".into());
+                        }
+                    }
+                }
+            }
+        }
+    };
+    if ctx.cancel.load(Ordering::Relaxed) {
+        return Err("iptal edildi".into());
+    }
+    (ctx.progress)("install", 0, 0);
+    Ok(guard)
 }
 
 /// Kurar ya da günceller; başarıda kullanıcıya gösterilecek kısa bir not döner.
@@ -38,15 +73,26 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
     if spec.method == Method::Script {
         return install_script(app, spec, release, &version, ctx).await;
     }
-    let portable = uses_portable(spec, before.as_ref(), ctx.store.install_root().is_some());
-    let pattern = asset_pattern(spec, portable).ok_or("katalogda dosya kalıbı yok")?;
+    let (pattern, plan) = choose(spec, before.as_ref(), ctx.store.install_root().is_some()).ok_or_else(|| no_route(spec))?;
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
     let name = select::pick(pattern, &names).ok_or_else(|| format!("release'te {pattern} kalıbına uyan dosya yok"))?;
     let asset = release.assets.iter().find(|a| a.name == name).unwrap();
     let file = ctx.store.dir("downloads").join(&asset.name);
     let digest = download(ctx, &asset.browser_download_url, &file, asset.size).await?;
-    let verified = verify(ctx, release, &asset.name, &digest).await?;
-    (ctx.progress)("install", 0, 0);
+    let verified = match verify(ctx, release, &asset.name, &digest).await {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = std::fs::remove_file(&file);
+            return Err(e);
+        }
+    };
+    let _slot = match install_slot(ctx).await {
+        Ok(g) => g,
+        Err(e) => {
+            let _ = std::fs::remove_file(&file);
+            return Err(e);
+        }
+    };
     let file2 = file.clone();
     let note = match spec.method {
         Method::Inno => {
@@ -62,11 +108,12 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
             ctx.store.set_record(&app.id, Some(Record { version: version.clone(), location: custom.then(|| dir.display().to_string()), ..Default::default() }));
             note
         }
-        Method::Deb if portable => {
+        Method::Deb if plan == Some(Plan::Portable) => {
             let p = spec.portable.clone().unwrap();
             let location = match before.as_ref() {
                 Some(_) => ctx.store.record(&app.id).and_then(|r| r.location).map(PathBuf::from).ok_or("taşınabilir kurulumun yeri bulunamadı")?,
-                None => root.clone().ok_or("kurulum klasörü seçilmemiş")?.join(folder_name(&app.name)),
+                // klasör seçilmemişse (apt olmayan dağıtımlar) launcher'ın kendi veri klasörü
+                None => root.clone().unwrap_or_else(|| ctx.store.dir("apps")).join(folder_name(&app.name)),
             };
             let (id, name) = (app.id.clone(), app.name.clone());
             let loc2 = location.clone();
@@ -74,6 +121,7 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
             ctx.store.set_record(&app.id, Some(Record { version: version.clone(), location: Some(location.display().to_string()), ..Default::default() }));
             note
         }
+        Method::Deb if plan == Some(Plan::Pacman) => blocking(move || install_pacman(&file2)).await?,
         Method::Deb => blocking(move || install_deb(&file2)).await?,
         Method::Chrome => {
             let dir = match (&before, &root) {
@@ -89,22 +137,21 @@ pub async fn install(app: &App, spec: &PlatformSpec, release: &Release, ctx: &Ct
     Ok(if verified { note } else { format!("{note} (release'te SHA256SUMS.txt olmadığı için doğrulanmadı)") })
 }
 
-/// Linux: taşınabilir paket mi kurulacak? Zaten öyle kuruluysa evet; hiç kurulu değilse
-/// kullanıcı bir kurulum klasörü seçtiyse ve uygulama böyle bir paket sunuyorsa evet.
-pub fn uses_portable(spec: &PlatformSpec, before: Option<&detect::Installed>, root_set: bool) -> bool {
-    spec.method == Method::Deb
-        && spec.portable.is_some()
-        && match before {
-            Some(i) => i.portable,
-            None => root_set,
-        }
+/// Release dosyası kalıbı ve Linux `deb` yönteminde kurulum yolu (apt, pacman ya da
+/// taşınabilir paket; bkz. [`linux::plan`]). Bu sistemde kurulamıyorsa `None`.
+pub fn choose<'s>(spec: &'s PlatformSpec, before: Option<&detect::Installed>, root_set: bool) -> Option<(&'s str, Option<Plan>)> {
+    if spec.method != Method::Deb {
+        return spec.asset.as_deref().map(|a| (a, None));
+    }
+    let plan = linux::plan(spec, before.map(detect::Installed::via), root_set, detect::package_managers())?;
+    Some((linux::asset_pattern(spec, plan)?, Some(plan)))
 }
 
-pub fn asset_pattern(spec: &PlatformSpec, portable: bool) -> Option<&str> {
-    if portable {
-        spec.portable.as_ref().map(|p| p.asset.as_str())
+fn no_route(spec: &PlatformSpec) -> String {
+    if spec.method == Method::Deb {
+        "bu Linux dağıtımı için paket yok: uygulama yalnızca .deb sunuyor (apt gerekli)".into()
     } else {
-        spec.asset.as_deref()
+        "katalogda dosya kalıbı yok".into()
     }
 }
 
@@ -150,26 +197,38 @@ pub(crate) async fn download(ctx: &Ctx<'_>, url: &str, dest: &Path, size_hint: u
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Release'te SHA256SUMS.txt varsa özeti karşılaştırır. Dosya yoksa `Ok(false)`.
+/// Release'te özet listesi (`SHA256SUMS.txt`, `SHA256SUMS-*.txt`) varsa özeti karşılaştırır.
+/// Hiçbiri yoksa `Ok(false)`.
 pub(crate) async fn verify(ctx: &Ctx<'_>, release: &Release, name: &str, digest: &str) -> Result<bool, String> {
-    let Some(sums_asset) = release.assets.iter().find(|a| a.name.eq_ignore_ascii_case("SHA256SUMS.txt")) else {
+    let lists: Vec<_> = release.assets.iter().filter(|a| sums::is_sums_file(&a.name)).collect();
+    if lists.is_empty() {
         return Ok(false);
-    };
+    }
     (ctx.progress)("verify", 0, 0);
-    let text = ctx
-        .http
-        .get(&sums_asset.browser_download_url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("SHA256SUMS.txt indirilemedi: {e}"))?
-        .text()
-        .await
-        .map_err(|e| e.to_string())?;
-    match sums::parse(&text).get(name) {
-        Some(expected) if expected == digest => Ok(true),
+    let mut expected: Option<String> = None;
+    for list in lists {
+        let text = ctx
+            .http
+            .get(&list.browser_download_url)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| format!("{} indirilemedi: {e}", list.name))?
+            .text()
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(h) = sums::parse(&text).remove(name) {
+            // iki liste aynı dosya için farklı özet veriyorsa hiçbirine güvenilmez
+            if expected.as_ref().is_some_and(|e| *e != h) {
+                return Err(format!("{name} için özet listeleri birbirini tutmuyor, dosya kurulmadı"));
+            }
+            expected = Some(h);
+        }
+    }
+    match expected {
+        Some(e) if e == digest => Ok(true),
         Some(_) => Err(format!("{name} doğrulanamadı: SHA-256 özeti tutmuyor, dosya kurulmadı")),
-        None => Err(format!("{name} SHA256SUMS.txt içinde yok, dosya kurulmadı")),
+        None => Err(format!("{name} özet listesinde (SHA256SUMS) yok, dosya kurulmadı")),
     }
 }
 
@@ -308,6 +367,19 @@ fn install_deb(file: &Path) -> Result<String, String> {
     }
 }
 
+// ------------------------------------------------------------------ Linux: pacman (Arch)
+
+fn install_pacman(file: &Path) -> Result<String, String> {
+    let path = file.to_string_lossy();
+    // bağımlılıklar depolardan çekilir; pacman'in kilidi launcher'ın kurulum sırasıyla korunur
+    let out = pkexec(&["pacman", "-U", "--noconfirm", &path])?;
+    match out.status.code() {
+        Some(0) => Ok("Kuruldu".into()),
+        Some(126) | Some(127) => Err("yönetici izni verilmedi".into()),
+        _ => Err(format!("paket kurulamadı: {}", output_tail(&out))),
+    }
+}
+
 // ------------------------------------------------------------------ Chrome eklentisi
 
 fn install_chrome(id: &str, zip_file: &Path, version: &str, dir: &Path, store: &Store) -> Result<String, String> {
@@ -416,7 +488,13 @@ async fn install_script(app: &App, spec: &PlatformSpec, release: &Release, versi
     let url = release.zipball_url.clone().ok_or("release'in kaynak arşivi yok")?;
     let zip_file = ctx.store.dir("downloads").join(format!("{}-{version}-source.zip", app.id));
     download(ctx, &url, &zip_file, 0).await?;
-    (ctx.progress)("install", 0, 0);
+    let _slot = match install_slot(ctx).await {
+        Ok(g) => g,
+        Err(e) => {
+            let _ = std::fs::remove_file(&zip_file);
+            return Err(e);
+        }
+    };
     let src = ctx.store.dir("tools").join(&app.id);
     let _ = std::fs::remove_dir_all(&src);
     extract_zip(&zip_file, &src, Strip::FirstDir)?;
@@ -559,6 +637,16 @@ pub fn uninstall(app: &App, spec: &PlatformSpec, store: &Store) -> Result<String
             let _ = std::fs::remove_file(desktop_file(&app.id));
             Ok("Kaldırıldı".into())
         }
+        Method::Deb if found.as_ref().is_some_and(|i| i.pacman) => {
+            let package = spec.pacman.as_ref().map(|p| p.package.as_str()).ok_or("pacman paket adı tanımlı değil")?;
+            let out = pkexec(&["pacman", "-R", "--noconfirm", package])?;
+            match out.status.code() {
+                Some(0) => Ok("Kaldırıldı".into()),
+                Some(126) | Some(127) => Err("yönetici izni verilmedi".into()),
+                _ => Err(format!("kaldırılamadı: {}", output_tail(&out))),
+            }
+        }
+        Method::Deb if found.is_none() => Err("uygulama kurulu değil".into()),
         Method::Deb => {
             let package = spec.package.as_deref().unwrap_or_default();
             let out = pkexec(&["apt-get", "remove", "-y", package])?;

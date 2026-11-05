@@ -32,6 +32,8 @@ struct AppState {
     http: reqwest::Client,
     loaded: tokio::sync::Mutex<Option<Loaded>>,
     jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// İndirmeler paralel, kurulum adımları sırayla (bkz. `install::install_slot`)
+    install_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -111,9 +113,9 @@ fn view(app: &App, loaded: &Loaded, state: &AppState) -> AppView {
     let asset = spec.zip(release).and_then(|(s, r)| match s.method {
         Method::Script => r.zipball_url.as_ref().map(|_| None),
         _ => {
-            let portable = install::uses_portable(s, installed.as_ref(), root_set);
+            let (pattern, _) = install::choose(s, installed.as_ref(), root_set)?;
             let names: Vec<&str> = r.assets.iter().map(|a| a.name.as_str()).collect();
-            let name = select::pick(install::asset_pattern(s, portable).unwrap_or(""), &names)?;
+            let name = select::pick(pattern, &names)?;
             Some(r.assets.iter().find(|a| a.name == name).map(|a| a.size))
         }
     });
@@ -214,7 +216,7 @@ async fn install(handle: AppHandle, state: State<'_, AppState>, id: String) -> R
     let progress = move |phase: &str, done: u64, total: u64| {
         let _ = h.emit("job", JobEvent { id: emit_id.clone(), phase: phase.into(), done, total });
     };
-    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress };
+    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress, install_lock: &state.install_lock };
     let result = install::install(&app, &spec, &release, &ctx).await;
     state.jobs.lock().unwrap().remove(&id);
     let _ = handle.emit("job", JobEvent { id, phase: "done".into(), done: 0, total: 0 });
@@ -274,6 +276,8 @@ async fn open(state: State<'_, AppState>, id: String) -> Result<Opened, String> 
 async fn uninstall(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let (app, _) = find(&state, &id).await?;
     let spec = app.spec_for(Os::current()).cloned().ok_or("bu sistem için sürüm yok")?;
+    // kaldırma da paket yöneticisini kullanır: süren bir kurulumla çakışmasın
+    let _slot = state.install_lock.lock().await;
     tokio::task::block_in_place(|| install::uninstall(&app, &spec, &state.store))
 }
 
@@ -339,7 +343,7 @@ async fn update_launcher(handle: AppHandle, state: State<'_, AppState>) -> Resul
     let progress = move |phase: &str, done: u64, total: u64| {
         let _ = h.emit("job", JobEvent { id: ID.into(), phase: phase.into(), done, total });
     };
-    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress };
+    let ctx = install::Ctx { http: &state.http, store: &state.store, cancel, progress: &progress, install_lock: &state.install_lock };
     let result = selfupdate::run(&release, &ctx, true).await;
     state.jobs.lock().unwrap().remove(ID);
     let _ = handle.emit("job", JobEvent { id: ID.into(), phase: "done".into(), done: 0, total: 0 });
@@ -382,7 +386,8 @@ fn cli_self_update() -> i32 {
             return 0;
         }
         let progress = |_: &str, _: u64, _: u64| {};
-        let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress };
+        let lock = tokio::sync::Mutex::new(());
+        let ctx = install::Ctx { http: &http, store: &store, cancel: Arc::new(AtomicBool::new(false)), progress: &progress, install_lock: &lock };
         match selfupdate::run(&release, &ctx, false).await {
             Ok(()) => {
                 println!("C Launcher {current} → {} güncellendi", release.tag_name);
@@ -410,6 +415,7 @@ fn main() {
             http: github::client(),
             loaded: tokio::sync::Mutex::new(None),
             jobs: Mutex::new(HashMap::new()),
+            install_lock: tokio::sync::Mutex::new(()),
         })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![

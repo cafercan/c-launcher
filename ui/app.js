@@ -18,7 +18,9 @@ const STATUS = {
   no_release: 'HENÜZ SÜRÜM YOK',
 };
 const OS_NAME = { windows: 'WINDOWS', macos: 'MACOS', linux: 'LINUX' };
-const PHASE = { download: 'İndiriliyor', verify: 'Doğrulanıyor', install: 'Kuruluyor' };
+const PHASE = { download: 'İndiriliyor', verify: 'Doğrulanıyor', queued: 'Sırada', install: 'Kuruluyor' };
+// "Tümünü güncelle" aynı anda en fazla bu kadar indirme başlatır; kurulumlar arka planda sırayla yapılır
+const PARALLEL = 3;
 
 let data = null;
 let view = localStorage.getItem('view') || 'grid';
@@ -26,6 +28,7 @@ let filter = 'all';
 let query = '';
 const jobs = {};      // id -> {phase, done, total}
 const errors = {};    // id -> son hata
+const waiting = new Set(); // "Tümünü güncelle"de henüz başlamamış uygulamalar
 
 // ---------------------------------------------------------------- yardımcılar
 const mb = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1) + ' MB';
@@ -98,7 +101,7 @@ function actions(app) {
     const text = job.phase === 'download' && job.total
       ? `${PHASE.download} ${mb(job.done)} / ${mb(job.total)} · %${pct}` : (PHASE[job.phase] || 'Çalışıyor') + '…';
     const indet = job.phase !== 'download' || !job.total;
-    const cancel = job.phase === 'download' ? `<button class="more" data-act="cancel" data-id="${app.id}" title="İptal">✕</button>` : '';
+    const cancel = job.phase === 'download' || job.phase === 'queued' ? `<button class="more" data-act="cancel" data-id="${app.id}" title="İptal">✕</button>` : '';
     return `<div class="actions"><div class="progress">${text}<div class="track ${indet ? 'indet' : ''}"><i style="width:${indet ? '' : pct + '%'}"></i></div></div>${cancel}</div>`;
   }
   return `<div class="actions">${primary(app)}<button class="more" data-act="menu" data-id="${app.id}" title="Diğer">…</button></div>`;
@@ -272,7 +275,9 @@ document.addEventListener('click', e => {
     const { act, id } = b.dataset;
     if (act === 'install') install(id);
     else if (act === 'open') open(id);
-    else if (act === 'cancel') invoke('cancel', { id });
+    else if (act === 'cancel') {
+      if (waiting.delete(id)) { delete jobs[id]; render(); } else invoke('cancel', { id });
+    }
     else if (act === 'menu') { e.stopPropagation(); showMenu(id, b); }
     return;
   }
@@ -293,7 +298,17 @@ document.addEventListener('error', e => {
 $('#search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
 $('#refresh').addEventListener('click', () => load(true));
 $('#updateAll').addEventListener('click', async () => {
-  for (const a of data.apps.filter(a => a.status === 'update_available' && !jobs[a.id])) await install(a.id);
+  const ids = data.apps.filter(a => a.status === 'update_available' && !jobs[a.id]).map(a => a.id);
+  ids.forEach(id => { waiting.add(id); jobs[id] = { phase: 'queued', done: 0, total: 0 }; });
+  render();
+  // PARALLEL kadar işçi sıradaki uygulamaları alır: indirmeler aynı anda yürür
+  const worker = async () => {
+    while (ids.length) {
+      const id = ids.shift();
+      if (waiting.delete(id)) await install(id); // iptal edilenler atlanır
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, ids.length) }, worker));
 });
 $('#closeChrome').addEventListener('click', () => $('#chrome').close());
 

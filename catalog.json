@@ -50,7 +50,10 @@
           "inno_app_id": "{9E7231B5-C614-4AAA-B5EA-B73031BECD16}"
         },
         "macos": { "method": "dmg", "asset": "MDViewer-*-macos-arm64.dmg", "app": "MD Flow Viewer.app" },
-        "linux": { "method": "deb", "asset": "mdflowviewer_*.deb", "package": "mdflowviewer", "run": "mdflowviewer" }
+        "linux": {
+          "method": "deb", "asset": "mdflowviewer_*.deb", "package": "mdflowviewer", "run": "mdflowviewer",
+          "pacman": { "asset": "mdflowviewer-bin-*-x86_64.pkg.tar.zst", "package": "mdflowviewer-bin" }
+        }
       }
     },
     {
@@ -67,7 +70,10 @@
           "asset": "AICStation-*-windows-x64-setup.exe",
           "inno_app_id": "{CDE4B130-56B7-4231-A31A-76303DB23395}"
         },
-        "linux": { "method": "deb", "asset": "AICStation-*-linux-amd64.deb", "package": "aic-station", "run": "aicstation" }
+        "linux": {
+          "method": "deb", "asset": "AICStation-*-linux-amd64.deb", "package": "aic-station", "run": "aicstation",
+          "pacman": { "asset": "AICStation-*-linux-x86_64.pkg.tar.zst", "package": "aicstation-bin" }
+        }
       }
     },
     {

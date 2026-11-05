@@ -38,6 +38,11 @@ fn kind() -> Result<Kind, String> {
         return Ok(Kind::AppImage(PathBuf::from(image)));
     }
     if exe.starts_with("/usr/") {
+        // /usr altına .deb dışında bir yolla (ör. AUR paketi) kurulduysa launcher kendini
+        // değiştiremez: güncellemeyi sistemin paket yöneticisi yapar
+        if !crate::detect::package_managers().apt {
+            return Err("C Launcher sistem paket yöneticisiyle kurulmuş; onunla güncelleyin (ör. pacman -Syu)".into());
+        }
         return Ok(Kind::Deb);
     }
     Ok(Kind::Portable(exe))
@@ -68,7 +73,7 @@ pub async fn run(release: &Release, ctx: &Ctx<'_>, relaunch: bool) -> Result<(),
         let _ = std::fs::remove_file(&file);
         return Err("bu sürümün SHA256SUMS.txt dosyası henüz yayımlanmamış; birkaç dakika sonra yeniden deneyin".into());
     }
-    (ctx.progress)("install", 0, 0);
+    let _slot = install::install_slot(ctx).await?;
     install::blocking(move || apply(kind, &file, relaunch)).await
 }
 

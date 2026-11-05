@@ -17,7 +17,8 @@ tools and Chrome extensions) straight from their GitHub releases. Windows, macOS
   ayarlarınız korunur
 - **Elle kurduklarınızı da bulur:** kurulu sürümü sistemin kendisinden okur (Windows kayıt
   defteri, macOS `Info.plist`, Linux `dpkg`)
-- **Kart ve tablo görünümü,** arama, filtre, "Tümünü güncelle"
+- **Kart ve tablo görünümü,** arama, filtre, "Tümünü güncelle": indirmeler paralel yapılır
+  (aynı anda 3), kurulumlar paket yöneticisi çakışmasın diye sırayla
 - Açık ve koyu tema sistemi izler
 
 ## İndirme
@@ -31,6 +32,11 @@ tools and Chrome extensions) straight from their GitHub releases. Windows, macOS
 | Linux | `.deb` (Ubuntu, Debian, Mint), `.AppImage` ya da taşınabilir `c-launcher-<sürüm>-linux-x86_64.tar.gz` |
 
 Taşınabilir Linux paketi parola istemez: istediğiniz klasöre açıp `c-launcher/c-launcher`'ı çalıştırın.
+
+**Arch ve türevleri:** `.AppImage` ya da taşınabilir paketi kullanın (`sudo pacman -S webkit2gtk-4.1`
+gerekir). Launcher apt olmadığını görür; uygulamaları release'leri sunuyorsa pacman paketi
+(`.pkg.tar.zst`), yoksa taşınabilir paket olarak kurar. Yalnızca `.deb` sunan uygulamalar
+"Bu sistem için yok" görünür.
 
 ## Güncelleme
 
@@ -72,7 +78,8 @@ npx @tauri-apps/cli@2 dev                   # geliştirme penceresi
 npx @tauri-apps/cli@2 build                 # paketler
 ```
 
-Linux'ta önce: `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`.
+Linux'ta önce: `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+(Arch: `sudo pacman -S --needed webkit2gtk-4.1 libappindicator-gtk3 librsvg patchelf base-devel`).
 Arayüzü yalnızca denemek için: `cd ui && python3 -m http.server` ve tarayıcıda açın.
 
 Görünüm [ArtCraft Launcher](https://github.com/storytold/craft-launcher)'dan esinlenmiştir; kodu

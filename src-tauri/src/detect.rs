@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use launcher_core::linux::{InstalledVia, PackageManagers};
 use launcher_core::{Method, PlatformSpec};
 
 use crate::store::Store;
@@ -18,6 +19,47 @@ pub struct Installed {
     pub uninstall: Option<String>,
     /// Linux: .deb yerine seçilen klasöre taşınabilir paket olarak kuruldu
     pub portable: bool,
+    /// Linux: .deb yerine pacman paketi olarak kuruldu (Arch ve türevleri)
+    pub pacman: bool,
+}
+
+impl Installed {
+    /// Linux `deb` yöntemi: uygulamanın hangi biçimle kurulu olduğu.
+    pub fn via(&self) -> InstalledVia {
+        if self.portable {
+            InstalledVia::Portable
+        } else if self.pacman {
+            InstalledVia::Pacman
+        } else {
+            InstalledVia::Dpkg
+        }
+    }
+}
+
+/// Linux: sistemde hangi paket yöneticileri var. Açılışta bir kez bakılır.
+pub fn package_managers() -> PackageManagers {
+    static PM: std::sync::OnceLock<PackageManagers> = std::sync::OnceLock::new();
+    *PM.get_or_init(|| {
+        if !cfg!(target_os = "linux") {
+            return PackageManagers::default();
+        }
+        PackageManagers { apt: on_path("apt-get") && on_path("dpkg-query"), pacman: on_path("pacman") }
+    })
+}
+
+/// Komut PATH üzerinde çalıştırılabilir bir dosya olarak var mı.
+fn on_path(cmd: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|dir| {
+        let file = dir.join(cmd);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        }
+        #[cfg(not(unix))]
+        file.is_file()
+    })
 }
 
 pub fn installed(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Installed> {
@@ -32,7 +74,12 @@ pub fn installed(id: &str, spec: &PlatformSpec, store: &Store) -> Option<Install
                 None => dmg(app),
             }
         }
-        Method::Deb => deb(spec.package.as_deref()?).or_else(|| portable(id, spec, store)),
+        Method::Deb => {
+            let pm = package_managers();
+            let dpkg = spec.package.as_deref().filter(|_| pm.apt).and_then(deb);
+            let pac = || spec.pacman.as_ref().filter(|_| pm.pacman).and_then(|p| pacman(&p.package));
+            dpkg.or_else(pac).or_else(|| portable(id, spec, store))
+        }
         Method::Script => {
             let record = store.record(id);
             // tanımlı bir algılama yolu yoksa yalnızca launcher'ın kaydına bakılır
@@ -95,7 +142,7 @@ fn inno(app_id: &str) -> Option<Installed> {
         // DisplayIcon "C:\...\App.exe,0" biçiminde olabilir
         let exe = get("DisplayIcon").map(|s| PathBuf::from(s.rsplit_once(',').map_or(s.as_str(), |(p, _)| p).trim_matches('"')));
         let uninstall = get("QuietUninstallString").or_else(|| get("UninstallString").map(|u| format!("{u} /VERYSILENT /SUPPRESSMSGBOXES /NORESTART")));
-        return Some(Installed { version: get("DisplayVersion"), target: exe, uninstall, portable: false });
+        return Some(Installed { version: get("DisplayVersion"), target: exe, uninstall, ..Default::default() });
     }
     None
 }
@@ -151,6 +198,24 @@ fn deb(_package: &str) -> Option<Installed> {
     None
 }
 
+/// Arch ve türevleri: `pacman -Q <paket>` → "aicstation-bin 1.5.0-1".
+#[cfg(target_os = "linux")]
+fn pacman(package: &str) -> Option<Installed> {
+    let out = std::process::Command::new("pacman").args(["-Q", "--", package]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let version = text.split_whitespace().nth(1)?;
+    // "1:1.5.0-1" → "1.5.0": dönem ve pkgrel, Debian sürümleriyle aynı biçimde
+    Some(Installed { version: Some(debian_upstream(version)), pacman: true, ..Default::default() })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pacman(_package: &str) -> Option<Installed> {
+    None
+}
+
 /// "1:2.9.0-1ubuntu2" → "2.9.0": dönem ve Debian revizyonu sürüm karşılaştırmasını bozmasın.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn debian_upstream(v: &str) -> String {
@@ -169,5 +234,7 @@ mod tests {
         assert_eq!(super::debian_upstream("1:2.9.0-1ubuntu2"), "2.9.0");
         assert_eq!(super::debian_upstream("0.1.0"), "0.1.0");
         assert_eq!(super::debian_upstream("1.2.0-beta.1"), "1.2.0-beta.1");
+        // pacman: pkgrel
+        assert_eq!(super::debian_upstream("1.5.0-1"), "1.5.0");
     }
 }

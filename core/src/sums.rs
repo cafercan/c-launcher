@@ -1,4 +1,6 @@
-//! Release'teki `SHA256SUMS.txt` dosyası (`sha256sum` çıktısı biçiminde).
+//! Release'teki `SHA256SUMS.txt` dosyası (`sha256sum` çıktısı biçiminde). Bazı release'ler
+//! özetleri sisteme göre ayrı dosyalara böler (`SHA256SUMS-linux.txt`, `SHA256SUMS-arch.txt`);
+//! onlar da okunur.
 
 use std::collections::HashMap;
 
@@ -17,6 +19,12 @@ pub fn parse(text: &str) -> HashMap<String, String> {
     out
 }
 
+/// Release dosyası bir özet listesi mi: `SHA256SUMS.txt` ya da `SHA256SUMS-<ek>.txt`.
+pub fn is_sums_file(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n == "sha256sums.txt" || (n.starts_with("sha256sums-") && n.ends_with(".txt") && n.len() > "sha256sums-.txt".len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -29,5 +37,16 @@ mod tests {
         assert_eq!(m.get("kitaplik-0.1.0-linux-all.deb"), Some(&h));
         assert_eq!(m.get("Setup.exe"), Some(&"b".repeat(64)));
         assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn recognises_split_sums_files() {
+        assert!(is_sums_file("SHA256SUMS.txt"));
+        assert!(is_sums_file("sha256sums.txt"));
+        assert!(is_sums_file("SHA256SUMS-arch.txt"));
+        assert!(is_sums_file("SHA256SUMS-linux.txt"));
+        assert!(!is_sums_file("SHA256SUMS-.txt"));
+        assert!(!is_sums_file("SHA256SUMS.txt.sig"));
+        assert!(!is_sums_file("notes.txt"));
     }
 }

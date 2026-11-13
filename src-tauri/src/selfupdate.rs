@@ -58,9 +58,24 @@ fn pattern(kind: &Kind) -> &'static str {
     }
 }
 
+/// Release bu uygulamanın mı: Tauri paketleri `<productName>_<sürüm>_...` adıyla yayımlanır
+/// (GitHub boşlukları noktaya çevirir). Koddan türetilip adı değiştirilmiş bir kopya,
+/// güncelleme kaynağını değiştirmeyi unutsa bile başka bir uygulamayı kendi yerine kurmaz.
+pub fn is_ours(release: &Release) -> bool {
+    let prefix = format!("{}_", env!("PRODUCT_NAME").replace(' ', ".")).to_lowercase();
+    release.assets.iter().any(|a| a.name.to_lowercase().starts_with(&prefix))
+}
+
 /// Yeni sürümü indirir, doğrular ve kurar; `relaunch` ise yeni sürümü başlatmayı da ayarlar.
 /// Başarıda çağıran uygulamayı hemen kapatmalıdır.
 pub async fn run(release: &Release, ctx: &Ctx<'_>, relaunch: bool) -> Result<(), String> {
+    if !is_ours(release) {
+        return Err(format!(
+            "{} sürümü {} adlı uygulamaya ait değil; bu kopyayı kendi güncelleme kaynağından güncelleyin",
+            release.tag_name,
+            env!("PRODUCT_NAME")
+        ));
+    }
     let kind = kind()?;
     let pat = pattern(&kind);
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
@@ -142,10 +157,14 @@ fn windows_setup(file: &Path, relaunch: bool) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // ping: penceresiz ortamda da çalışan bekleme
-    let mut script = format!("ping -n 3 127.0.0.1 >nul & \"{}\" /S", file.display());
+    let dir = exe.parent().ok_or("kurulum klasörü bulunamadı")?;
+    // ping: penceresiz ortamda da çalışan bekleme.
+    // /D: kurulum çalışan kopyanın klasörüne yapılır, kısayollar aynı exe'yi göstermeye devam
+    // eder. NSIS kuralı: /D en sonda ve tırnaksız olmalı; ardından boşluk bırakılmaz ki
+    // `&`'den önceki boşluk klasör adına karışmasın.
+    let mut script = format!("ping -n 3 127.0.0.1 >nul & \"{}\" /S /D={}", file.display(), dir.display());
     if relaunch {
-        script.push_str(&format!(" & start \"\" \"{}\"", exe.display()));
+        script.push_str(&format!("& start \"\" \"{}\"", exe.display()));
     }
     Command::new("cmd")
         .raw_arg(format!("/C \"{script}\""))
@@ -161,4 +180,25 @@ fn windows_setup(file: &Path, relaunch: bool) -> Result<(), String> {
 #[cfg(not(windows))]
 fn windows_setup(_file: &Path, _relaunch: bool) -> Result<(), String> {
     Err("yalnızca Windows'ta".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(names: &[&str]) -> Release {
+        let assets: Vec<_> = names.iter().map(|n| serde_json::json!({ "name": n, "size": 1, "browser_download_url": "" })).collect();
+        let r = serde_json::json!({ "tag_name": "v9.9.9", "assets": assets });
+        serde_json::from_value(r).unwrap()
+    }
+
+    #[test]
+    fn accepts_only_own_releases() {
+        // tauri.conf.json productName: "C Launcher"
+        assert!(is_ours(&release(&["C.Launcher_0.1.7_x64-setup.exe", "SHA256SUMS.txt"])));
+        assert!(is_ours(&release(&["c.launcher_0.1.7_amd64.deb"])));
+        assert!(!is_ours(&release(&["Usteco.Launcher_0.1.7_x64-setup.exe"])));
+        assert!(!is_ours(&release(&["c-launcher-0.1.7-linux-x86_64.tar.gz"])));
+        assert!(!is_ours(&release(&[])));
+    }
 }

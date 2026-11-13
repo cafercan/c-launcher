@@ -155,6 +155,7 @@ fn overview_of(loaded: &Loaded, state: &AppState) -> Overview {
     let launcher_latest = loaded
         .launcher_latest
         .as_ref()
+        .filter(|r| selfupdate::is_ours(r))
         .and_then(version_of)
         .filter(|v| Version::parse(env!("CARGO_PKG_VERSION")).is_some_and(|cur| *v > cur))
         .map(|v| v.to_string());

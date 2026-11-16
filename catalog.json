@@ -77,6 +77,24 @@
       }
     },
     {
+      "id": "familytree",
+      "name": "FamilyTree",
+      "repo": "cafercan/FamilyTree",
+      "group": "desktop",
+      "description": "e-Devlet soy ağacı PDF'lerinden aile ağacı ve akrabalık; açık kaynak, reklamsız, internetsiz",
+      "accent": "#3a4a8c",
+      "icon": "https://raw.githubusercontent.com/cafercan/FamilyTree/main/src-tauri/icons/128x128.png",
+      "platforms": {
+        "windows": {
+          "method": "inno",
+          "asset": "FamilyTree-*-windows-x64-setup.exe",
+          "inno_app_id": "{3971512A-372B-421E-9C98-B814BE459B7B}"
+        },
+        "macos": { "method": "dmg", "asset": "FamilyTree-*-macos-arm64.dmg", "app": "FamilyTree.app" },
+        "linux": { "method": "deb", "asset": "familytree_*_amd64.deb", "package": "familytree", "run": "familytree" }
+      }
+    },
+    {
       "id": "xd",
       "name": "xd",
       "repo": "cafercan/xd",
